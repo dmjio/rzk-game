@@ -1,8 +1,9 @@
 {-# LANGUAGE CPP               #-}
-{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuasiQuotes       #-}
 {-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE FlexibleContexts  #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- | The L0 user interface. Levels are grouped into BOPPPS-style /sections/, and
 -- the player navigates a flat sequence of /slots/: prose pseudo-levels (text the
@@ -19,7 +20,7 @@ import qualified Miso.Html          as H
 import qualified Miso.Html.Property as P
 import qualified Miso.Svg           as S
 import qualified Miso.Svg.Property  as SP
-import           Miso.DSL           (jsg0, jsg2)
+import           Miso.FFI.QQ        (js)
 import           Miso.Lens
 import           Miso.String        (MisoString, fromMisoString, ms)
 
@@ -63,9 +64,7 @@ import           RzkGame.Section
 -- import@ because marshalling a @JSString@ argument directly trips a wasm codegen
 -- bug.
 renderProseInto :: DOMRef -> MisoString -> IO ()
-renderProseInto ref src = do
-  _ <- jsg2 "renderInto" ref src
-  pure ()
+renderProseInto ref src = [js|renderInto(${ref},${src})|]
 
 -- | The game the app plays: the sections loaded from @game.json@ at startup, or
 -- the built-in 'Content.gameSections' as a fallback. The bytes are fetched in JS
@@ -701,13 +700,13 @@ clearPlayerData :: IO ()
 clearPlayerData = mapM_ removeLocalStorage playerDataKeys
 
 -- | Gather the progress and hand it to @download.js@ as one archive file. Called
--- through the DSL's 'jsg2' (like 'renderProseInto') to avoid the @JSString@-arg
+-- through the DSL's 'js' QuasiQuoter (like 'renderProseInto') to avoid the @JSString@-arg
 -- codegen bug.
 exportProgress :: IO ()
 exportProgress = do
   pairs <- gatherProgress
-  _ <- jsg2 "download" ("rzk-game-progress.json" :: MisoString) (ms (encodeArchive pairs))
-  pure ()
+  let ps = encodeArchive pairs
+  [js| download ('rzk-game-progress.json', ${ps}) |]
 
 -- | Result of the last applied import, set by 'applyPendingImport' before the
 -- app starts and read once at 'Init': @Left@ an error message, or @Right@ the
@@ -854,7 +853,7 @@ updateModel = \case
         result   .= checkLevel (nthLevel ix) (fromMisoString e')
         io_ (saveDraft ix e')
   ExportProgress -> io_ exportProgress
-  ImportProgress -> io_ (jsg0 "pickImport" >> pure ())  -- picks a file, then reloads
+  ImportProgress -> io_ [js|pickImport()|]
   ResetProgress  -> confirmReset .= True
   CancelReset    -> confirmReset .= False
   ConfirmReset   -> do
