@@ -17,3 +17,9 @@ cabal.project.local~
 result
 result-*
 .direnv/
+
+# Local planning notes, drafts, and scratch docs (roadmap, handoffs, PR drafts)
+notes/
+
+# Phase 0 de-risking spike (kept locally, not part of the engine)
+spikes/
