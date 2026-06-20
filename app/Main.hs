@@ -204,6 +204,7 @@ data Action
   | Format                     -- ^ tidy the editable region with rzk's formatter
   | Reset
   | SelectSlot Int             -- ^ navigate to a slot (prose or puzzle)
+  | HashNav MisoString         -- ^ navigate to the slot named by a URL fragment
   | ToggleMap                  -- ^ show/hide the full level map
   | Init                       -- ^ dispatched at mount: load saved state + draft
   | LoadState LoadedState       -- ^ install the persisted player state read at 'Init'
@@ -503,6 +504,13 @@ hsSelftest = do
       derivedOk  = map levelTitle [ puzzleLevel z | SPuzzle z <- concatMap sectionItems gameSections ]
                      == map levelTitle gameLevels
   putStrLn (if orderOk && derivedOk then "section order: OK" else "SECTION ORDER FAILED")
+  putStrLn "== anchors: every slot's URL anchor round-trips to its index (expect OK) =="
+  let anchorOk = and [ anchorSlotIx (slotAnchorAt i) == Just i
+                     | i <- [0 .. totalSlots - 1] ]
+              && anchorSlotIx ("#" <> slotAnchorAt 0) == Just 0  -- a leading # is tolerated
+              && anchorSlotIx "" == Nothing                      -- bare URL: no jump
+              && anchorSlotIx "no-such-slot" == Nothing          -- unknown: no jump
+  putStrLn (if anchorOk then "anchors: OK" else "ANCHORS FAILED")
   putStrLn "== locking: an unmet prerequisite locks its dependents (expect OK) =="
   let apHomItem  = maybe (error "no ap-hom") snd (lookupPuzzleSlot slots "ap-hom")
       mapPointIx = maybe (error "no map-point") fst (lookupPuzzleSlot slots "map-point")
@@ -530,7 +538,40 @@ hsSelftest = do
 
 app :: App Model Action
 app = (component initModel updateModel viewModel)
-  { mount = Just Init }   -- seed solved/viewed/pretest/unlock and the draft
+  { mount = Just Init     -- seed solved/viewed/pretest/unlock and the draft
+    -- Back/forward (a popstate carrying a new URL fragment) navigates to the
+    -- named slot, so the URL hash and the shown slot stay in step. The initial
+    -- fragment is handled separately in 'Init' (popstate does not fire on load).
+  , subs  = [ uriSub (HashNav . uriFragment) ]
+  }
+
+-- | A slot's stable URL anchor: the prose or puzzle id. Used as the location
+-- hash (e.g. @#const-triangle@) so a slot can be deep-linked and survives a
+-- page refresh. Ids are kebab-case and need no escaping in a fragment.
+slotAnchor :: Slot -> T.Text
+slotAnchor (SlotProse  _ p)   = proseId p
+slotAnchor (SlotPuzzle _ _ z) = puzzleId z
+
+slotAnchorAt :: Int -> T.Text
+slotAnchorAt = slotAnchor . slotAt
+
+-- | The slot index named by a URL fragment, if any matches. A leading @#@ is
+-- tolerated; an empty or unknown fragment yields 'Nothing' (so a bad link or a
+-- bare URL simply stays on slot 0).
+anchorSlotIx :: T.Text -> Maybe Int
+anchorSlotIx raw
+  | T.null frag = Nothing
+  | otherwise   = fst <$> find ((== frag) . slotAnchor . snd) (zip [0 ..] slots)
+  where
+    frag = fromMaybe raw (T.stripPrefix "#" raw)
+
+-- | Write the location hash, without a page jump or reload. Setting it to the
+-- value already there is a no-op in the browser (no @hashchange@, no history
+-- entry), so navigating to the current slot does not stack history. Routed
+-- through the 'js' QuasiQuoter (like 'renderProseInto') to dodge the JSString-arg
+-- codegen bug.
+setHash :: T.Text -> IO ()
+setHash a = let a' = ms a in [js| window.location.hash = ${a'}; |]
 
 initModel :: Model
 initModel = enterSlotPure 0
@@ -746,23 +787,14 @@ updateModel = \case
       Just ix -> io_ (saveDraft ix s)
       Nothing -> pure ()
   ToggleMap -> mapOpen %= not
-  SelectSlot i -> do
-    history    .= []
-    slotIx     .= i
-    hintsShown .= 0          -- a fresh level starts with its hints hidden again
-    mapOpen    .= False      -- collapse the map after a jump, back to content
-    case slotAt i of
-      SlotProse _ p -> do
-        editable .= ""
-        result   .= NotChecked
-        viewed %= Set.insert (proseId p)
-        v <- use viewed
-        io_ (saveViewed v)
-      SlotPuzzle _ ix z -> do
-        let t = levelTemplate (puzzleLevel z)
-        editable .= ms t
-        result   .= checkLevel (puzzleLevel z) t
-        io (loadDraftAction ix)
+  SelectSlot i -> gotoSlot i
+  -- A fragment from back/forward (or the initial URL, replayed at 'Init'): jump
+  -- to the named slot, unless it is already current or the fragment is unknown.
+  HashNav frag -> do
+    cur <- use slotIx
+    case anchorSlotIx (fromMisoString frag) of
+      Just j | j /= cur -> gotoSlot j
+      _                 -> pure ()
   Reset -> withPuzzle $ \ix -> do
     e <- use editable
     history %= (e :)         -- a mistaken Reset can be undone
@@ -777,6 +809,10 @@ updateModel = \case
     case mix of
       Just ix -> io (loadDraftAction ix)  -- a puzzle slot 0: restore its draft
       Nothing -> pure ()                  -- a prose slot 0: LoadState marks it viewed
+    -- Honour a slot named in the URL hash (a deep link, or a refresh that kept
+    -- the fragment): popstate does not fire on load, so read it once here. A
+    -- bare or unknown fragment leaves the player on slot 0.
+    io (HashNav . uriFragment <$> getURI)
   LoadState ls -> do
     solved   .= lsSolved ls
     pretest  .= lsPretest ls
@@ -884,6 +920,29 @@ updateModel = \case
     maybeFormat :: Bool -> T.Text -> T.Text
     maybeFormat True  = formatEditable
     maybeFormat False = id
+
+    -- Navigate to a slot: reset the per-level UI state, mirror the slot to the
+    -- URL hash (so a refresh or copied link returns here), and set up the editor
+    -- — a prose slot is marked viewed; a puzzle slot loads its template then its
+    -- saved draft. Shared by 'SelectSlot' (a click) and 'HashNav' (back/forward).
+    gotoSlot i = do
+      history    .= []
+      slotIx     .= i
+      hintsShown .= 0          -- a fresh level starts with its hints hidden again
+      mapOpen    .= False      -- collapse the map after a jump, back to content
+      io_ (setHash (slotAnchorAt i))
+      case slotAt i of
+        SlotProse _ p -> do
+          editable .= ""
+          result   .= NotChecked
+          viewed %= Set.insert (proseId p)
+          v <- use viewed
+          io_ (saveViewed v)
+        SlotPuzzle _ ix z -> do
+          let t = levelTemplate (puzzleLevel z)
+          editable .= ms t
+          result   .= checkLevel (puzzleLevel z) t
+          io (loadDraftAction ix)
 
     -- The current slot's global puzzle index, if it is a puzzle.
     currentPuzzleIx = do
