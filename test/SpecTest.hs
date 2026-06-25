@@ -305,6 +305,25 @@ main = do
         (not ("Definitions in context" `T.isPrefixOf` firstLine e))
     r -> check ("expected a TypeError, got " <> show r) False
 
+  -- 12. Crash safety: rzk can still panic on a partial term (a multi-variable
+  --     binder in a hole's context, rzk#263) by throwing a pure `error`.
+  --     checkLevel forces the result inside a handler and reports such a panic as
+  --     a recoverable CheckerCrashed instead of letting it escape, which would
+  --     freeze the wasm app.
+  putStrLn "== crash safety: an rzk panic becomes a recoverable CheckerCrashed =="
+  let crashLevel = Level
+        { levelTitle = "crash", levelIntro = "", levelStatement = ""
+        , levelPrelude = "#lang rzk-1\n#assume A : U"
+        , levelTemplate = "#def foo (k : (x y : A) → A) : A\n  := ?"
+        , levelSolution = "#def foo (k : (x y : A) → A) : A\n  := ?"
+        , levelGoalName = "foo", levelGoalType = "(k : (x y : A) → A) → A"
+        , levelGoalUses = [], levelInventory = [], levelHints = []
+        , levelGated = False, levelConclusion = "" }
+  check "a multivar-binder panic is caught as CheckerCrashed"
+    (case checkLevel crashLevel (levelTemplate crashLevel) of
+       CheckerCrashed _ -> True
+       _                -> False)
+
   n <- readIORef failed
   if n == 0
     then putStrLn "\nAll Phase 3 spec/loader tests passed."

@@ -109,6 +109,7 @@ data Model = Model
   , _importMsg :: Maybe (Either T.Text Int) -- ^ last import result: error, or count restored
   , _formatOnCheck :: Bool                  -- ^ format the editable region before each check
   , _hintsShown :: Int                      -- ^ how many hints the player has revealed (per-session)
+  , _dirty      :: Bool                      -- ^ editable changed since the shown result was checked
   } deriving (Eq)
 
 slotIx :: Lens Model Int
@@ -149,6 +150,9 @@ formatOnCheck = lens _formatOnCheck $ \m v -> m { _formatOnCheck = v }
 
 hintsShown :: Lens Model Int
 hintsShown = lens _hintsShown $ \m v -> m { _hintsShown = v }
+
+dirty :: Lens Model Bool
+dirty = lens _dirty $ \m v -> m { _dirty = v }
 
 -- | The slot currently being shown.
 currentSlot :: GameEnv -> Model -> Slot
@@ -205,6 +209,7 @@ data Action
   | DismissImportMsg           -- ^ dismiss the import result banner
   | SetFormatOnCheck Bool      -- ^ toggle (and persist) the format-on-check preference
   | RevealHint                 -- ^ reveal the next hidden hint (progressive disclosure)
+  | CopyText MisoString        -- ^ copy the given text to the clipboard
   -- No 'Eq': 'DOMRef' (a 'JSVal') has none. miso does not require 'Eq' on actions.
 
 main :: IO ()
@@ -559,9 +564,14 @@ anchorSlotIx env raw
 setHash :: T.Text -> IO ()
 setHash a = let a' = ms a in [js| window.location.hash = ${a'}; |]
 
+-- | Copy text to the clipboard (the crash report). Available on localhost and
+-- HTTPS (a secure context), which covers local play and GitHub Pages.
+copyToClipboard :: MisoString -> IO ()
+copyToClipboard t = [js| navigator.clipboard.writeText(${t}); |]
+
 initModel :: GameEnv -> Maybe (Either T.Text Int) -> Model
 initModel env importResult = enterSlotPure env 0
-  (Model 0 "" NotChecked Set.empty Set.empty Map.empty Set.empty [] False False importResult False 0)
+  (Model 0 "" NotChecked Set.empty Set.empty Map.empty Set.empty [] False False importResult False 0 False)
 
 -- | Set up the model's editor for a slot, without IO. A puzzle slot loads its
 -- template and checks it (so the focused hole and its moves show without a first
@@ -570,12 +580,12 @@ enterSlotPure :: GameEnv -> Int -> Model -> Model
 enterSlotPure env i m = case slotAt env i of
   SlotProse _ _ ->
     m { _slotIx = i, _editable = "", _result = NotChecked, _history = []
-      , _hintsShown = 0 }
+      , _hintsShown = 0, _dirty = False }
   SlotPuzzle _ _ z ->
     let t = levelTemplate (puzzleLevel z)
     in m { _slotIx = i, _editable = ms t
          , _result = checkLevel (puzzleLevel z) t, _history = []
-         , _hintsShown = 0 }
+         , _hintsShown = 0, _dirty = False }
 
 -- localStorage keys.
 progressKey, viewedKey, pretestKey, unlockedKey :: MisoString
@@ -783,6 +793,7 @@ updateModel :: GameEnv -> Action -> Effect parent props Model Action
 updateModel env = \case
   SetEditable s -> do
     editable .= s
+    dirty .= True            -- typed since the last check: the shown result is stale
     mix <- currentPuzzleIx
     case mix of
       Just ix -> io_ (saveDraft env ix s)
@@ -801,7 +812,7 @@ updateModel env = \case
     history %= (e :)         -- a mistaken Reset can be undone
     let t = levelTemplate (nthLevel env ix)
     editable .= ms t
-    result   .= checkLevel (nthLevel env ix) t
+    setResult (checkLevel (nthLevel env ix) t)
     io_ (removeDraft env ix)     -- drop the draft so the template stays on next load
   Init -> do
     io (LoadState <$> readLoadedState env)
@@ -854,7 +865,7 @@ updateModel env = \case
     if mix == Just i
       then do
         editable .= s
-        result   .= checkLevel (nthLevel env i) (fromMisoString s)
+        setResult (checkLevel (nthLevel env i) (fromMisoString s))
       else pure ()
   Refine ins -> withPuzzle $ \ix -> do
     foc <- use formatOnCheck
@@ -863,7 +874,7 @@ updateModel env = \case
     let e'  = maybeFormat foc (refineFirstHole ins (fromMisoString e))
         res = checkLevel (nthLevel env ix) e'
     editable .= ms e'
-    result   .= res
+    setResult res
     io_ (saveDraft env ix (ms e'))
     recordSolved ix res
   Undo -> do
@@ -873,7 +884,7 @@ updateModel env = \case
       (prev : rest, Just ix) -> do
         history  .= rest
         editable .= prev
-        result   .= checkLevel (nthLevel env ix) (fromMisoString prev)
+        setResult (checkLevel (nthLevel env ix) (fromMisoString prev))
         io_ (saveDraft env ix prev)
       _ -> pure ()
   Check -> withPuzzle $ \ix -> do
@@ -886,7 +897,7 @@ updateModel env = \case
       then do history %= (e0 :); editable .= e; io_ (saveDraft env ix e)
       else pure ()
     let res = checkLevel (nthLevel env ix) (fromMisoString e)
-    result .= res
+    setResult res
     recordSolved ix res
   Format -> withPuzzle $ \ix -> do
     e <- use editable
@@ -899,7 +910,7 @@ updateModel env = \case
       else do
         history %= (e :)         -- formatting can be undone
         editable .= e'
-        result   .= checkLevel (nthLevel env ix) (fromMisoString e')
+        setResult (checkLevel (nthLevel env ix) (fromMisoString e'))
         io_ (saveDraft env ix e')
   ExportProgress -> io_ (exportProgress env)
   ImportProgress -> io_ [js|pickImport()|]
@@ -926,7 +937,13 @@ updateModel env = \case
     let cap = max (plainHintCount (levelHints (nthLevel env ix))) 1
     n <- use hintsShown
     if n < cap then hintsShown .= n + 1 else pure ()
+  CopyText t -> io_ (copyToClipboard t)
   where
+    -- Record a fresh check outcome: store it and clear the dirty flag, since the
+    -- shown result now matches the editable text. Every check site goes through
+    -- this so the "edited since last check" status stays accurate.
+    setResult r = do result .= r; dirty .= False
+
     -- Apply the formatter only when format-on-check is on, leaving the text as
     -- typed otherwise. The formatter itself no-ops on a non-parsing fragment.
     maybeFormat :: Bool -> T.Text -> T.Text
@@ -946,14 +963,14 @@ updateModel env = \case
       case slotAt env i of
         SlotProse _ p -> do
           editable .= ""
-          result   .= NotChecked
+          setResult NotChecked
           viewed %= Set.insert (proseId p)
           v <- use viewed
           io_ (saveViewed v)
         SlotPuzzle _ ix z -> do
           let t = levelTemplate (puzzleLevel z)
           editable .= ms t
-          result   .= checkLevel (puzzleLevel z) t
+          setResult (checkLevel (puzzleLevel z) t)
           io (loadDraftAction env ix)
 
     -- The current slot's global puzzle index, if it is a puzzle.
@@ -1269,11 +1286,12 @@ puzzleSlotView env m sid ix z =
              , movesView m
              , inventoryView lvl
              , H.h3_ [] [ text "Result" ]
+             , checkStatusView m
              -- A gated solve that uses ungranted lemmas is withheld: the red
              -- gate box replaces the green success box; otherwise the result
              -- shows normally, with any gate notice below it.
              , if m ^. result == Solved && not (null gate) && levelGated lvl
-                 then text "" else resultView (m ^. result)
+                 then text "" else resultView lvl (m ^. editable) (m ^. result)
              , gateView lvl (m ^. result) gate
              , hintsView m lvl
              , conclusionView m lvl solvedAccepted
@@ -1624,8 +1642,44 @@ slotLabel :: Slot -> T.Text
 slotLabel (SlotProse  _ p)    = proseTitle p
 slotLabel (SlotPuzzle _ ix z) = tshow (ix + 1) <> ". " <> levelTitle (puzzleLevel z)
 
-resultView :: CheckResult -> View Model Action
-resultView = \case
+-- | A ready-to-paste bug report for a checker crash: the level's prelude, the
+-- player's current definition, and the error. The "Copy issue report" button in
+-- the crash panel puts this on the clipboard, GitHub-Markdown formatted.
+crashReport :: Level -> T.Text -> T.Text -> T.Text
+crashReport lvl editable err = T.unlines
+  [ "The rzk typechecker crashed in rzk-game."
+  , ""
+  , "**Prelude:**"
+  , "```rzk"
+  , T.stripEnd (levelPrelude lvl)
+  , "```"
+  , ""
+  , "**Definition:**"
+  , "```rzk"
+  , T.stripEnd editable
+  , "```"
+  , ""
+  , "**Error:**"
+  , "```"
+  , T.stripEnd err
+  , "```"
+  ]
+
+-- | A small status line above the result: while the editor has been changed
+-- since the shown result was checked, it flags that the result is stale. (With
+-- the check running synchronously the result is otherwise always current; this
+-- covers the gap after typing, before the next Check or tap.)
+checkStatusView :: Model -> View Model Action
+checkStatusView m
+  | m ^. dirty && notChecked = text ""   -- nothing checked yet: no stale result to flag
+  | m ^. dirty               =
+      H.p_ [ P.class_ "check-stale" ]
+        [ text "● Edited since last check — press Check to update the result." ]
+  | otherwise                = text ""
+  where notChecked = case m ^. result of NotChecked -> True; _ -> False
+
+resultView :: Level -> MisoString -> CheckResult -> View Model Action
+resultView lvl editable = \case
   NotChecked     -> H.pre_ [] [ text "(press Check)" ]
   ParseError e _ -> H.pre_ [ P.class_ "err" ] [ text (ms ("Parse error:\n" <> e)) ]
   -- The rzk type-error formatter is verbose (a "when typechecking …" trace per
@@ -1645,6 +1699,21 @@ resultView = \case
       ( H.p_ [] [ text (ms (tshow (length hs) <> " hole(s) remaining")) ]
       : map holeView hs
       )
+  CheckerCrashed e ->
+    H.div_ [ P.class_ "err" ]
+      [ H.p_ [] [ text "⚠ The checker hit a bug on this input, not necessarily a mistake in your proof." ]
+      , H.p_ []
+          [ H.button_ [ P.class_ "copy-report"
+                      , H.onClick (CopyText (ms (crashReport lvl (fromMisoString editable) e)))
+                      , P.title_ "Copy a ready-to-paste issue report (prelude, your definition, and the error)" ]
+              [ text "📋 Copy issue report" ]
+          , text " then "
+          , H.a_ [ P.href_ "https://github.com/rzk-lang/rzk-game/issues/new"
+                 , P.target_ "_blank" ] [ text "open an issue" ]
+          , text " and paste it."
+          ]
+      , H.pre_ [ P.class_ "errdump" ] [ text (ms e) ]
+      ]
 
 -- | The level conclusion prose. The div is keyed by slot, so it is recreated on
 -- navigation (and the prose re-injected); it is revealed once the level solves.

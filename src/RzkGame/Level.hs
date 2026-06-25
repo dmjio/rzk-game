@@ -1,6 +1,8 @@
-{-# LANGUAGE LambdaCase        #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE LambdaCase          #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 -- | The level model and the check against rzk.
 --
@@ -26,12 +28,16 @@ module RzkGame.Level
   , gatePassed
   ) where
 
+import           Control.DeepSeq      (NFData, force)
+import           Control.Exception    (SomeException, evaluate, try)
 import           Data.Char            (isDigit, isSpace)
 import           Data.List            (nub)
 import           Data.Maybe           (mapMaybe, maybeToList)
 import           Data.String          (fromString)
 import           Data.Text            (Text)
 import qualified Data.Text            as T
+import           GHC.Generics         (Generic)
+import           System.IO.Unsafe     (unsafePerformIO)
 import           Text.Read            (readMaybe)
 
 import           RzkGame.Highlight    (Tok (..), TokClass (Plain), highlight)
@@ -127,7 +133,10 @@ data CheckResult
   | TypeError Text [Int]    -- ^ a genuine type error (+ editable lines to squiggle)
   | Holes [HoleView]        -- ^ unsolved holes, each with its goal + local context
   | Solved                  -- ^ typechecks with no remaining holes
-  deriving (Eq, Show)
+  | CheckerCrashed Text     -- ^ rzk panicked/threw; caught so the app stays alive
+  deriving (Eq, Show, Generic)
+
+instance NFData CheckResult
 
 -- | The editable-region line(s) a result wants squiggled (empty when there is
 -- nothing to underline). Consumed by the editor overlay.
@@ -151,7 +160,9 @@ data HoleView = HoleView
   , hvTopes    :: [Text]         -- ^ tope assumptions
   , hvMoves    :: [Text]         -- ^ elimination/context moves (rzk's @holeCandidates@)
   , hvIntros   :: [Text]         -- ^ introduction moves (rzk's @holeIntroductions@)
-  } deriving (Eq, Show)
+  } deriving (Eq, Show, Generic)
+
+instance NFData HoleView
 
 -- | Convert rzk's structured 'HoleInfo' into a display-ready 'HoleView'. Each
 -- field is already in user-facing names, so we just render it to text here.
@@ -275,8 +286,30 @@ parseErrorLine msg =
 -- in-scope assumption (@#assume@d variable, e.g. @funext@) it uses, so without
 -- this the synthetic check would be rejected for a goal built on such an
 -- assumption. The clause is omitted when the goal uses nothing.
+--
+-- rzk can still panic on a partial term (e.g. a multi-variable binder in a hole's
+-- context, rzk-lang/rzk#263), throwing a pure @error@ that fires lazily while the
+-- result is forced — in the wasm app that freezes the whole page. To stay alive,
+-- 'checkLevel' forces the pure result to normal form inside an exception handler
+-- (see 'guardCrash') and reports a panic as a recoverable 'CheckerCrashed'.
 checkLevel :: Level -> Text -> CheckResult
-checkLevel lvl editable =
+checkLevel lvl editable = guardCrash (checkLevelPure lvl editable)
+
+-- | Force a check result to normal form, turning any pure exception thrown while
+-- forcing it (an rzk panic, an incomplete pattern, …) into a 'CheckerCrashed'.
+-- The check is a pure function of its inputs, so this 'unsafePerformIO' is
+-- referentially transparent; the 'NOINLINE' keeps it from being floated or shared
+-- across distinct results.
+guardCrash :: CheckResult -> CheckResult
+guardCrash r = unsafePerformIO $ do
+  outcome <- try (evaluate (force r))
+  pure $ case outcome of
+    Right ok                  -> ok
+    Left (e :: SomeException) -> CheckerCrashed (T.strip (T.pack (show e)))
+{-# NOINLINE guardCrash #-}
+
+checkLevelPure :: Level -> Text -> CheckResult
+checkLevelPure lvl editable =
   let usesClause = case levelGoalUses lvl of
         [] -> ""
         us -> " uses (" <> T.intercalate ", " us <> ")"
@@ -412,6 +445,7 @@ renderResult = \case
   Holes hs        -> tshow (length hs) <> " hole(s):\n\n"
                        <> T.intercalate "\n" (map renderHoleView hs)
   Solved          -> "Solved: no holes, typechecks."
+  CheckerCrashed e -> "Checker crashed:\n" <> e
   where
     -- A " (at line N)" / " (at lines N, M)" suffix for the self-test/log output.
     atLine []  = ""
