@@ -8,7 +8,7 @@ statement: hom B (g x) (g y)
 title: A function on a morphism
 ---
 
-Functions act on morphisms too. A morphism $f : x \to y$ in $A$ is a path; applying $g$ at each moment of that path gives a morphism $g\,x \to g\,y$ in $B$. The function $g$ is already in place; fill in the point of $A$ that $f$ traces out as the coordinate moves. Refine with `f`, then give the coordinate.
+Functions act on morphisms too. A morphism $f : x \to y$ in $A$ is a path; applying $g$ at each moment of that path gives a morphism $g\,x \to g\,y$ in $B$. Introduce the interval coordinate, then apply $g$ to the point of $A$ that $f$ traces out as the coordinate moves.
 
 ```rzk prelude
 #lang rzk-1
@@ -33,7 +33,7 @@ Functions act on morphisms too. A morphism $f : x \to y$ in $A$ is a path; apply
 ```rzk template
 #def ap-hom (A B : U) (g : A → B) (x y : A) (f : hom A x y)
   : hom B (g x) (g y)
-  := \ t → g (?)
+  := ?
 ```
 
 ```rzk solution

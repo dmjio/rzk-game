@@ -229,16 +229,23 @@ proseCompositionSummary = Prose "composition-summary" "Wrap-up" (Just Summary) $
 -- Formatting is idempotent, so the extended preludes below ('segalPrelude',
 -- 'assocPrelude') stay canonical when they concatenate further definitions.
 prelude :: Text
-prelude = formatFixpoint $ T.unlines
+prelude = formatFixpoint $ idMorphismPrelude <> T.unlines
+  [ "#def id-hom (A : U) (x : A) : hom A x x := \\ t → x"
+  , "#def hom2 (A : U) (x y z : A)"
+  , "  (f : hom A x y) (g : hom A y z) (h : hom A x z) : U"
+  , "  := ( (t , s) : Δ²) → A [ s ≡ 0₂ ↦ f t , t ≡ 1₂ ↦ g s , s ≡ t ↦ h s ]"
+  ]
+
+-- | The warm-up prelude for the very first level. Building @id-hom@ is that
+-- level's whole task, so it must not already be in scope there; the shared
+-- 'prelude' adds it (and @hom2@) on top for every level that follows.
+idMorphismPrelude :: Text
+idMorphismPrelude = formatFixpoint $ T.unlines
   [ "#lang rzk-1"
   , "#def Δ¹ : 2 → TOPE := \\ t → TOP"
   , "#def Δ² : (2 × 2) → TOPE := \\ (t , s) → s ≤ t"
   , "#def hom (A : U) (x y : A) : U"
   , "  := (t : Δ¹) → A [ t ≡ 0₂ ↦ x , t ≡ 1₂ ↦ y ]"
-  , "#def id-hom (A : U) (x : A) : hom A x x := \\ t → x"
-  , "#def hom2 (A : U) (x y z : A)"
-  , "  (f : hom A x y) (g : hom A y z) (h : hom A x z) : U"
-  , "  := ( (t , s) : Δ²) → A [ s ≡ 0₂ ↦ f t , t ≡ 1₂ ↦ g s , s ≡ t ↦ h s ]"
   ]
 
 -- | The prelude for the composition levels. It extends the shared one with the
@@ -316,7 +323,7 @@ idMorphismLevel = Level
   , levelIntro     =
       "A morphism $x \\to y$ in $A$ is a path along the directed interval $\\Delta^1$. The simplest one is the identity: the morphism from $x$ to itself that just stays put. Both endpoints of the path are $x$, so a constant path will do. Build it."
   , levelStatement = "hom A x x"
-  , levelPrelude   = prelude
+  , levelPrelude   = idMorphismPrelude
   , levelTemplate  = T.unlines
       [ "#def my-id (A : U) (x : A)"
       , "  : hom A x x"
@@ -331,7 +338,6 @@ idMorphismLevel = Level
   , levelGoalType  = "(A : U) → (x : A) → hom A x x"
   , levelInventory =
       [ "x        : A"
-      , "id-hom   : (A : U) → (x : A) → hom A x x"
       , "λ-intro  : introduce the interval coordinate"
       ]
   , levelHints      =
@@ -460,13 +466,13 @@ mapPointLevel :: Level
 mapPointLevel = Level
   { levelTitle     = "A function on a point"
   , levelIntro     =
-      "Now we leave a single type and bring in a function $g : A \\to B$. A function sends each point of $A$ to a point of $B$. The identity morphism at a point just stays put, and $g$ carries it along. The application `g (?)` is already in place; fill in the point of $A$ whose image is the identity's endpoint."
+      "Now we leave a single type and bring in a function $g : A \\to B$. A function sends each point of $A$ to a point of $B$. The identity morphism at a point just stays put, and $g$ carries it along. Introduce the interval coordinate, then apply $g$ to the point of $A$ whose image is the identity's endpoint."
   , levelStatement = "hom B (g x) (g x)"
   , levelPrelude   = prelude
   , levelTemplate  = T.unlines
       [ "#def map-point (A B : U) (g : A → B) (x : A)"
       , "  : hom B (g x) (g x)"
-      , "  := \\ t → g (?)"
+      , "  := ?"
       ]
   , levelSolution  = T.unlines
       [ "#def map-point (A B : U) (g : A → B) (x : A)"
@@ -489,20 +495,20 @@ mapPointLevel = Level
 
 -- | Functoriality on a morphism (the action of a function on a 1-cell). A
 -- function @g : A → B@ carries a morphism @f : x → y@ in @A@ to a morphism
--- @g x → g y@ in @B@, by applying @g@ at each moment of the path. The
--- application @g@ is in place; the player fills the point @f@ traces out.
+-- @g x → g y@ in @B@, by applying @g@ at each moment of the path. The player
+-- introduces the coordinate and applies @g@ to the point @f@ traces out.
 -- Solution: the traversing point @f t@, so the result is @g (f t)@.
 apHomLevel :: Level
 apHomLevel = Level
   { levelTitle     = "A function on a morphism"
   , levelIntro     =
-      "Functions act on morphisms too. A morphism $f : x \\to y$ in $A$ is a path; applying $g$ at each moment of that path gives a morphism $g\\,x \\to g\\,y$ in $B$. The function $g$ is already in place; fill in the point of $A$ that $f$ traces out as the coordinate moves. Refine with `f`, then give the coordinate."
+      "Functions act on morphisms too. A morphism $f : x \\to y$ in $A$ is a path; applying $g$ at each moment of that path gives a morphism $g\\,x \\to g\\,y$ in $B$. Introduce the interval coordinate, then apply $g$ to the point of $A$ that $f$ traces out as the coordinate moves."
   , levelStatement = "hom B (g x) (g y)"
   , levelPrelude   = prelude
   , levelTemplate  = T.unlines
       [ "#def ap-hom (A B : U) (g : A → B) (x y : A) (f : hom A x y)"
       , "  : hom B (g x) (g y)"
-      , "  := \\ t → g (?)"
+      , "  := ?"
       ]
   , levelSolution  = T.unlines
       [ "#def ap-hom (A B : U) (g : A → B) (x y : A) (f : hom A x y)"

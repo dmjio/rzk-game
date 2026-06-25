@@ -240,6 +240,24 @@ main = do
   check "a non-gated level never fails the gate"
     (gatePassed (head gameLevels) "#def x := whatever-undefined-thing")
 
+  -- 10b. Allow-list: checkLevel forwards a level's granted lemmas to rzk
+  --     (typecheckModulesWithHolesAndLemmas), so a granted top-level lemma
+  --     surfaces among a hole's candidate moves, applied to holes. The plain
+  --     hole query offers only local-hypothesis eliminations and goal
+  --     introductions, so a move headed by a prelude lemma can only come from
+  --     the allow-list. "The constant triangle" grants the prelude lemma
+  --     id-hom, which its goal is built from.
+  putStrLn "== allow-list: a granted lemma surfaces as a hole candidate move =="
+  let ctl   = head [ l | l <- gameLevels, levelTitle l == "The constant triangle" ]
+      grants = [ n | e <- levelInventory ctl, n <- take 1 (T.words e) ]
+      moves  = case checkLevel ctl (levelTemplate ctl) of
+                 Holes hs -> concatMap hvMoves hs
+                 _        -> []
+  check "id-hom is a granted prelude lemma on this level"
+    ("id-hom" `elem` grants)
+  check "a candidate move applies the granted lemma id-hom to holes"
+    (any (\m -> "id-hom" `T.isPrefixOf` m && "?" `T.isInfixOf` m) moves)
+
   -- 11. Error ordering: a wrong-typed editable region renders an error whose
   --     first non-empty line is the headline mismatch, not the global context
   --     dump. The engine formats TopDown, so the message leads (LSP-style).
