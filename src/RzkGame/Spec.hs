@@ -264,13 +264,15 @@ fenceRole line
   | otherwise = Nothing
   where s = T.stripStart line
 
--- | Recover the goal — the pinned definition name and its required /closed/
--- Π-type — from a @template@ block's @#def@. The win-condition check appends
+-- | Recover the goal — the pinned definition name, its required /closed/ Π-type,
+-- and the @uses (…)@ assumptions it declares — from a @template@ block's @#def@.
+-- The win-condition check appends
 --
--- > #def __rzkgame_goal_check : <type> := <name>
+-- > #def __rzkgame_goal_check uses (…) : <type> := <name>
 --
 -- so the type must be the closed Π-type that @<name>@ inhabits, with no binders
--- left on the left of the @:@.
+-- left on the left of the @:@, and the @uses@ list must match what @<name>@
+-- transitively needs (see 'takeUses' and 'RzkGame.Level.checkLevel').
 --
 -- Authors may write the template with grouped binders (the gentle style the
 -- hand-authored levels use, e.g. @#def rut (A : U) (x y : A) … : T := \\ … → ?@)
@@ -281,7 +283,7 @@ fenceRole line
 -- result type /is/ the closed type and passes through unchanged. The
 -- reconstruction reproduces exactly what rzk's elaborator would assign, so the
 -- recovered type matches the corresponding 'RzkGame.Content' @levelGoalType@.
-goalFromTemplate :: Text -> Either Text (Text, Text)
+goalFromTemplate :: Text -> Either Text (Text, Text, [Text])
 goalFromTemplate template = do
   let header = snd (T.breakOn "#def" (fst (T.breakOn ":=" template)))
   rest <- if T.null header
@@ -291,10 +293,25 @@ goalFromTemplate template = do
   if T.null name
     then Left "template `#def` has no name"
     else do
-      (bindersText, resultType) <- splitResultColon afterName
+      let (uses, afterUses) = takeUses (T.stripStart afterName)
+      (bindersText, resultType) <- splitResultColon afterUses
       let binders   = concatMap expandBinder (parenGroups bindersText)
           closed    = T.intercalate " → " (binders ++ [normalise resultType])
-      Right (name, closed)
+      Right (name, closed, uses)
+
+-- | Strip a leading @uses (a, b, …)@ clause (rzk's syntax puts it between the
+-- definition name and its parameters), returning its comma-separated names and
+-- the remaining text. A @#def@ with no @uses@ clause yields @([], input)@ — the
+-- keyword must be followed by a parenthesised list to count.
+takeUses :: Text -> ([Text], Text)
+takeUses t0 = case T.stripPrefix "uses" t0 of
+  Just r -> case T.uncons (T.stripStart r) of
+    Just ('(', inner) ->
+      let (grp, afterGrp) = T.break (== ')') inner
+          names = filter (not . T.null) (map T.strip (T.splitOn "," grp))
+      in (names, T.drop 1 afterGrp)  -- drop the closing ')'
+    _ -> ([], t0)                    -- "uses" not followed by '(' — not a clause
+  Nothing -> ([], t0)
 
 -- | Split @<binders> : <result-type>@ at the first colon that sits at paren
 -- depth zero — the one separating the binder groups from the result type. The
