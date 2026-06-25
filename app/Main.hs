@@ -202,7 +202,6 @@ data Action
   | ResetProgress              -- ^ ask to confirm erasing all progress
   | ConfirmReset               -- ^ confirmed: clear all player-data keys and re-init
   | CancelReset                -- ^ dismiss the reset confirmation
-  | SetImportMsg (Maybe (Either T.Text Int))  -- ^ show the result of an applied import
   | DismissImportMsg           -- ^ dismiss the import result banner
   | SetFormatOnCheck Bool      -- ^ toggle (and persist) the format-on-check preference
   | RevealHint                 -- ^ reveal the next hidden hint (progressive disclosure)
@@ -916,7 +915,6 @@ updateModel env = \case
     formatOnCheck .= False    -- its key is player data too, cleared above
     confirmReset .= False
     io (pure (SelectSlot 0))   -- back to the start; re-seeds the editor and viewed
-  SetImportMsg v   -> importMsg .= v
   DismissImportMsg -> importMsg .= Nothing
   SetFormatOnCheck b -> do
     formatOnCheck .= b
@@ -1278,7 +1276,7 @@ pretestControls env m z
                 , choice NotFamiliar "Not familiar yet"
                 ]
             , H.p_ [ P.class_ "pretest-note" ]
-                [ text "\"I already know this\" counts the pre-test as done and jumps you to the next unfinished step." ]
+                [ text "\x201cI already know this\x201d counts the pre-test as done and jumps you to the next unfinished step." ]
             ]
             <> case ans of
                  Just NotFamiliar ->
@@ -1502,8 +1500,8 @@ gateView lvl res violations
   where
     names = T.intercalate ", " violations
     hardMsg = case res of
-      Solved -> "🔒 So close — but this level grants only the moves under \x201cAllowed here\x201d, and your proof uses "
-      _      -> "🔒 Not allowed here — this level grants only the moves under \x201cAllowed here\x201d, not "
+      Solved -> "🔒 So close — but this level grants only the moves under \x201c\&Allowed here\x201d, and your proof uses "
+      _      -> "🔒 Not allowed here — this level grants only the moves under \x201c\&Allowed here\x201d, not "
 
 -- | The focused hole's rendered goal, if the proof currently has holes. This is
 -- what a hint's @when-goal@ trigger is matched against.
