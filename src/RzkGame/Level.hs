@@ -29,6 +29,7 @@ module RzkGame.Level
 import           Data.Char            (isDigit, isSpace)
 import           Data.List            (nub)
 import           Data.Maybe           (mapMaybe, maybeToList)
+import           Data.String          (fromString)
 import           Data.Text            (Text)
 import qualified Data.Text            as T
 import           Text.Read            (readMaybe)
@@ -41,7 +42,7 @@ import           Rzk.TypeCheck        (HoleEntry (..), HoleInfo (..),
                                        LocationInfo (..),
                                        OutputDirection (TopDown),
                                        ppTypeErrorInScopedContext',
-                                       typecheckModulesWithHoles)
+                                       typecheckModulesWithHolesAndLemmas)
 
 -- | A single level. The text fields are Rzk source or human-readable prose.
 data Level = Level
@@ -204,9 +205,16 @@ inventoryViolations lvl editable
               , n `elem` defined, n `notElem` allowed ]
   where
     defined = preludeDefinedNames (levelPrelude lvl)
-    allowed = mapMaybe firstToken (levelInventory lvl)
-                ++ referencedNames (levelSolution lvl)
-    firstToken e = case T.words e of (n : _) -> Just n; [] -> Nothing
+    allowed = levelInventoryNames lvl ++ referencedNames (levelSolution lvl)
+
+-- | The lemma names a level grants — the leading token of each inventory entry.
+-- An entry is written @name : type | synopsis@, so the name is its first word.
+-- These names form the per-level allow-list of hole candidates passed to rzk
+-- (see 'checkLevel'), and the granted-names part of the inventory gating
+-- allow-list (which 'inventoryViolations' extends with the solution's own uses).
+levelInventoryNames :: Level -> [Text]
+levelInventoryNames = mapMaybe firstToken . levelInventory
+  where firstToken e = case T.words e of (n : _) -> Just n; [] -> Nothing
 
 -- | The names a prelude /defines/: the first word after each @#def@ or
 -- @#postulate@ command. Continuation lines (indented, no command) are skipped.
@@ -265,10 +273,14 @@ checkLevel lvl editable =
   let goalCheck = "\n#def __rzkgame_goal_check : " <> levelGoalType lvl
                     <> "\n  := " <> levelGoalName lvl
       src = levelPrelude lvl <> "\n" <> editable <> goalCheck
+      -- the level's "Allowed here" lemmas, offered to rzk as hole candidates so
+      -- they surface as tap-to-fill moves applied to holes (an empty inventory
+      -- gives an empty allow-list, reproducing the plain hole query).
+      lemmas = map (fromString . T.unpack) (levelInventoryNames lvl)
   in case parseModule src of
        Left err -> ParseError err (toEditableLine =<< parseErrorLine err)
        Right m  ->
-         case typecheckModulesWithHoles [("level", m)] of
+         case typecheckModulesWithHolesAndLemmas lemmas [("level", m)] of
            -- A fatal error short-circuits to 'Left'; recoverable type errors
            -- (e.g. an unbound variable or a type mismatch) come back in the
            -- middle field. Both must be reported — only the holes-aware
