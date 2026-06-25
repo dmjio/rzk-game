@@ -6,7 +6,6 @@ hints:
 id: my-id
 inventory:
 - 'x        : A'
-- 'id-hom   : (A : U) → (x : A) → hom A x x'
 - 'λ-intro  : introduce the interval coordinate'
 statement: hom A x x
 title: The identity morphism
@@ -25,13 +24,6 @@ A morphism $x \to y$ in $A$ is a path along the directed interval $\Delta^1$. Th
 #def hom (A : U) (x y : A)
   : U
   := (t : Δ¹) → A [ t ≡ 0₂ ↦ x , t ≡ 1₂ ↦ y ]
-#def id-hom (A : U) (x : A)
-  : hom A x x
-  := \ t → x
-#def hom2 (A : U) (x y z : A)
-  ( f : hom A x y) (g : hom A y z) (h : hom A x z)
-  : U
-  := ((t , s) : Δ²) → A [ s ≡ 0₂ ↦ f t , t ≡ 1₂ ↦ g s , s ≡ t ↦ h s ]
 ```
 
 ```rzk template

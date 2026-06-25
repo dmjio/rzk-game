@@ -245,12 +245,12 @@ main = do
   --     surfaces among a hole's candidate moves, applied to holes. The plain
   --     hole query offers only local-hypothesis eliminations and goal
   --     introductions, so a move headed by a prelude lemma can only come from
-  --     the allow-list. "The identity morphism" grants the prelude lemma
-  --     id-hom, which the template's goal is built from.
+  --     the allow-list. "The constant triangle" grants the prelude lemma
+  --     id-hom, which its goal is built from.
   putStrLn "== allow-list: a granted lemma surfaces as a hole candidate move =="
-  let idm   = head [ l | l <- gameLevels, levelTitle l == "The identity morphism" ]
-      grants = [ n | e <- levelInventory idm, n <- take 1 (T.words e) ]
-      moves  = case checkLevel idm (levelTemplate idm) of
+  let ctl   = head [ l | l <- gameLevels, levelTitle l == "The constant triangle" ]
+      grants = [ n | e <- levelInventory ctl, n <- take 1 (T.words e) ]
+      moves  = case checkLevel ctl (levelTemplate ctl) of
                  Holes hs -> concatMap hvMoves hs
                  _        -> []
   check "id-hom is a granted prelude lemma on this level"
