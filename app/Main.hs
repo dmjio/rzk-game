@@ -25,7 +25,6 @@ import           Miso.Lens
 import           Miso.String        (MisoString, fromMisoString, ms)
 
 import           Control.Exception  (SomeException, evaluate, try)
-import           Data.IORef         (IORef, newIORef, readIORef, writeIORef)
 import           Data.List          (find, sort)
 import           Data.Map.Strict    (Map)
 import qualified Data.Map.Strict    as Map
@@ -34,7 +33,6 @@ import           Data.Set           (Set)
 import qualified Data.Set           as Set
 import qualified Data.Text          as T
 import           Data.Text.Encoding (encodeUtf8)
-import           System.IO.Unsafe   (unsafePerformIO)
 import           Text.Read          (readMaybe)
 
 import qualified RzkGame.Content    as Content
@@ -66,57 +64,34 @@ import           RzkGame.Section
 renderProseInto :: DOMRef -> MisoString -> IO ()
 renderProseInto ref src = [js|renderInto(${ref},${src})|]
 
--- | The game the app plays: the sections loaded from @game.json@ at startup, or
--- the built-in 'Content.gameSections' as a fallback. The bytes are fetched in JS
--- (see @index.js@) into @localStorage@ before @hs_start@, then 'loadGame' reads
--- them, runs 'buildGame', and writes the result into 'loadedSectionsRef' — which
--- 'main' forces before 'startApp', so the pure navigation values below see the
--- loaded game. The ref starts at the fallback, so a build with no @game.json@ (or
--- a malformed one) plays the built-in content unchanged.
-{-# NOINLINE loadedSectionsRef #-}
-loadedSectionsRef :: IORef [Section]
-loadedSectionsRef = unsafePerformIO (newIORef Content.gameSections)
+-- | The game's sections, slots, and levels bundled together. Built once in
+-- 'main' (or a test entry point) from the result of 'loadGame', then threaded
+-- into all navigation, view, and update functions via partial application.
+data GameEnv = GameEnv
+  { envSections :: [Section]
+  , envSlots    :: [Slot]
+  , envLevels   :: [Level]
+  }
 
-{-# NOINLINE loadedSections #-}
-loadedSections :: [Section]
-loadedSections = unsafePerformIO (readIORef loadedSectionsRef)
+mkGameEnv :: [Section] -> GameEnv
+mkGameEnv secs = GameEnv secs (slotsOfSections secs)
+  [ puzzleLevel z | SPuzzle z <- concatMap sectionItems secs ]
 
 -- | @localStorage@ key under which @index.js@ stashes the fetched @game.json@.
 gameJsonKey :: MisoString
 gameJsonKey = "rzk-game-json"
 
--- | Read the stashed @game.json@, build the sections, and install them. Any
--- failure (no bundle, malformed JSON, empty game) leaves the built-in fallback
--- in place. Called once at the very start of 'main', before 'loadedSections' is
--- forced.
-loadGame :: IO ()
+-- | Read the stashed @game.json@, build the sections, and return them. Any
+-- failure (no bundle, malformed JSON, empty game) returns the built-in fallback.
+loadGame :: IO [Section]
 loadGame = do
   mjson <- getLocalStorage gameJsonKey
   case mjson of
     Just s
       | let t = fromMisoString s, not (T.null t)
       , Right secs <- buildGame (encodeUtf8 t)
-      , not (null secs) -> writeIORef loadedSectionsRef secs
-    _ -> pure ()
-
--- | The game's sections, levels, and flattened navigation, all derived from the
--- loaded game (see 'loadedSections').
-gameSections :: [Section]
-gameSections = loadedSections
-
-gameSlots :: [Slot]
-gameSlots = slotsOfSections loadedSections
-
-gameLevels :: [Level]
-gameLevels = [ puzzleLevel z | SPuzzle z <- concatMap sectionItems loadedSections ]
-
--- | The navigation sequence and the sections, named once.
-slots :: [Slot]
-slots = gameSlots
-
--- | The total number of navigable slots (prose + puzzles).
-totalSlots :: Int
-totalSlots = length slots
+      , not (null secs) -> pure secs
+    _ -> pure Content.gameSections
 
 -- | UI state. The current position is a /slot/ index; solved puzzles, viewed
 -- prose, pre-test answers, and unlock overrides are persisted to @localStorage@.
@@ -176,32 +151,32 @@ hintsShown :: Lens Model Int
 hintsShown = lens _hintsShown $ \m v -> m { _hintsShown = v }
 
 -- | The slot currently being shown.
-currentSlot :: Model -> Slot
-currentSlot m = slotAt (_slotIx m)
+currentSlot :: GameEnv -> Model -> Slot
+currentSlot env m = slotAt env (_slotIx m)
 
-slotAt :: Int -> Slot
-slotAt i = head (drop i slots)
+slotAt :: GameEnv -> Int -> Slot
+slotAt env i = head (drop i (envSlots env))
 
 -- | The global puzzle index of a slot, if it is a puzzle.
-puzzleIndexAt :: Int -> Maybe Int
-puzzleIndexAt i = case slotAt i of
+puzzleIndexAt :: GameEnv -> Int -> Maybe Int
+puzzleIndexAt env i = case slotAt env i of
   SlotPuzzle _ ix _ -> Just ix
   _                 -> Nothing
 
 -- | Index the puzzle list by global index. (Miso's DSL re-exports @(!!)@ as a JS
 -- property accessor, shadowing Prelude's list index, so we avoid it here.)
-nthLevel :: Int -> Level
-nthLevel i = head (drop i gameLevels)
+nthLevel :: GameEnv -> Int -> Level
+nthLevel env i = head (drop i (envLevels env))
 
 -- | The stable id of the puzzle at a global puzzle index, and the inverse. These
 -- bridge the in-memory progress (still keyed by index, as the section logic
 -- expects) and its persisted form (keyed by id, so reordering levels cannot
 -- silently reassign a player's solved levels and drafts).
-puzzleIdByIx :: Int -> Maybe T.Text
-puzzleIdByIx i = puzzleId . snd <$> find ((== i) . fst) (puzzleSlots slots)
+puzzleIdByIx :: GameEnv -> Int -> Maybe T.Text
+puzzleIdByIx env i = puzzleId . snd <$> find ((== i) . fst) (puzzleSlots (envSlots env))
 
-puzzleIxById :: T.Text -> Maybe Int
-puzzleIxById pid = fst <$> lookupPuzzleSlot slots pid
+puzzleIxById :: GameEnv -> T.Text -> Maybe Int
+puzzleIxById env pid = fst <$> lookupPuzzleSlot (envSlots env) pid
 
 tshow :: Show a => a -> T.Text
 tshow = T.pack . show
@@ -227,7 +202,6 @@ data Action
   | ResetProgress              -- ^ ask to confirm erasing all progress
   | ConfirmReset               -- ^ confirmed: clear all player-data keys and re-init
   | CancelReset                -- ^ dismiss the reset confirmation
-  | SetImportMsg (Maybe (Either T.Text Int))  -- ^ show the result of an applied import
   | DismissImportMsg           -- ^ dismiss the import result banner
   | SetFormatOnCheck Bool      -- ^ toggle (and persist) the format-on-check preference
   | RevealHint                 -- ^ reveal the next hidden hint (progressive disclosure)
@@ -235,13 +209,13 @@ data Action
 
 main :: IO ()
 main = do
-  loadGame                            -- install the loaded game (or keep fallback)
-  applyPendingImport                  -- apply a just-imported archive before the app reads state
-  _ <- evaluate (length loadedSections)  -- force the navigation CAFs now, after load
+  secs         <- loadGame
+  let env       = mkGameEnv secs
+  importResult <- applyPendingImport env
 #ifdef INTERACTIVE
-  live defaultEvents app
+  live defaultEvents (mkApp env importResult)
 #else
-  startApp defaultEvents app
+  startApp defaultEvents (mkApp env importResult)
 #endif
 
 #ifdef WASM
@@ -259,9 +233,9 @@ foreign export javascript "hs_progresscheck" hsProgressCheck :: IO ()
 -- cannot: 'getLocalStorage' → 'buildGame' → 'checkLevel'.
 hsGameCheck :: IO ()
 hsGameCheck = do
-  loadGame
-  let secs = loadedSections
-      lvls = gameLevels
+  secs <- loadGame
+  let env  = mkGameEnv secs
+      lvls = envLevels env
   putStrLn ("loaded sections: " <> show (length secs))
   mapM_ (\s -> putStrLn ("  section: " <> T.unpack (sectionTitle s)
                            <> " (" <> T.unpack (sectionId s) <> "), "
@@ -292,23 +266,23 @@ hsGameCheck = do
 -- wrong-version archive is rejected and changes nothing.
 hsProgressCheck :: IO ()
 hsProgressCheck = do
+  secs <- loadGame
+  let env = mkGameEnv secs
   -- Seed a representative slice of player data.
-  setLocalStorage progressKey  "0,2,5"
-  setLocalStorage viewedKey    "morphisms-intro,functions-intro"
-  setLocalStorage pretestKey   "map-point=familiar"
-  setLocalStorage (draftKey 0) "#def my-id (A : U) (x : A)\n  : hom A x x\n  := ?"
-  before <- gatherProgress
+  setLocalStorage progressKey      "0,2,5"
+  setLocalStorage viewedKey        "morphisms-intro,functions-intro"
+  setLocalStorage pretestKey       "map-point=familiar"
+  setLocalStorage (draftKey env 0) "#def my-id (A : U) (x : A)\n  : hom A x x\n  := ?"
+  before <- gatherProgress env
   let archive = encodeArchive before
   putStrLn ("seeded keys: " <> show (length before))
 
   -- Clear everything, then import the archive through the real startup path.
-  clearPlayerData
-  cleared <- gatherProgress
+  clearPlayerData env
+  cleared <- gatherProgress env
   setLocalStorage importScratchKey (ms archive)
-  writeIORef importResultRef Nothing
-  applyPendingImport
-  after <- gatherProgress
-  res   <- readIORef importResultRef
+  res  <- applyPendingImport env
+  after <- gatherProgress env
   scratchGone <- getLocalStorage importScratchKey
   let restoredOk = sort after == sort before
       countOk    = res == Just (Right (length before))
@@ -322,9 +296,7 @@ hsProgressCheck = do
 
   -- A wrong-version archive is rejected and leaves the restored state untouched.
   setLocalStorage importScratchKey "{\"version\": 2, \"saved\": {\"rzk-game-progress\": \"9\"}}"
-  writeIORef importResultRef Nothing
-  applyPendingImport
-  res2  <- readIORef importResultRef
+  res2 <- applyPendingImport env
   prog  <- getLocalStorage progressKey
   let rejectedOk = case res2 of Just (Left _) -> True; _ -> False
       untouched  = prog == Just "0,2,5"
@@ -338,11 +310,11 @@ hsProgressCheck = do
 hsSelftest :: IO ()
 hsSelftest = do
   -- The self-test exercises the full built-in game (15 levels, fixed ids and
-  -- order), independent of whatever game.json a build happens to load. Shadow the
-  -- loaded-game navigation values with the Content ones for the rest of the test.
-  let gameLevels   = Content.gameLevels
-      gameSections = Content.gameSections
-      slots        = Content.gameSlots
+  -- order), independent of whatever game.json a build happens to load.
+  let env          = mkGameEnv Content.gameSections
+      gameLevels   = envLevels   env
+      gameSections = envSections env
+      slots        = envSlots    env
   flip mapM_ (zip [1 :: Int ..] gameLevels) $ \(n, lvl) -> do
     putStrLn ("== level " <> show n <> " template (expect holes) ==")
     putStrLn (T.unpack (renderResult (checkLevel lvl (levelTemplate lvl))))
@@ -488,13 +460,13 @@ hsSelftest = do
   putStrLn (if all lossless gameLevels then "lossless: OK" else "LOSSLESS FAILED")
   putStrLn "== progress codec: encode/decode round-trips; junk is dropped =="
   let allSolved   = Set.fromList [0 .. length gameLevels - 1]
-      roundTrips  = decodeSolved (encodeSolved allSolved) == allSolved
-      emptyOk     = decodeSolved (encodeSolved Set.empty) == Set.empty
-      junkDropped = decodeSolved "0,x,,2" == Set.fromList [0, 2]
+      roundTrips  = decodeSolved env (encodeSolved env allSolved) == allSolved
+      emptyOk     = decodeSolved env (encodeSolved env Set.empty) == Set.empty
+      junkDropped = decodeSolved env "0,x,,2" == Set.fromList [0, 2]
       -- Migration: a legacy numeric ("index") value still loads, and the new
       -- form is written as ids, not numbers.
-      legacyOk    = decodeSolved "0,2,5" == Set.fromList [0, 2, 5]
-      idFormOk    = encodeSolved (Set.fromList [0]) == ms (fromMaybe "?" (puzzleIdByIx 0))
+      legacyOk    = decodeSolved env "0,2,5" == Set.fromList [0, 2, 5]
+      idFormOk    = encodeSolved env (Set.fromList [0]) == ms (fromMaybe "?" (puzzleIdByIx env 0))
   putStrLn (if roundTrips && emptyOk && junkDropped && legacyOk && idFormOk
               then "progress codec: OK" else "PROGRESS CODEC FAILED")
   putStrLn "== viewed codec: encode/decode round-trips =="
@@ -519,11 +491,11 @@ hsSelftest = do
                      == map levelTitle gameLevels
   putStrLn (if orderOk && derivedOk then "section order: OK" else "SECTION ORDER FAILED")
   putStrLn "== anchors: every slot's URL anchor round-trips to its index (expect OK) =="
-  let anchorOk = and [ anchorSlotIx (slotAnchorAt i) == Just i
-                     | i <- [0 .. totalSlots - 1] ]
-              && anchorSlotIx ("#" <> slotAnchorAt 0) == Just 0  -- a leading # is tolerated
-              && anchorSlotIx "" == Nothing                      -- bare URL: no jump
-              && anchorSlotIx "no-such-slot" == Nothing          -- unknown: no jump
+  let anchorOk = and [ anchorSlotIx env (slotAnchorAt env i) == Just i
+                     | i <- [0 .. length slots - 1] ]
+              && anchorSlotIx env ("#" <> slotAnchorAt env 0) == Just 0  -- a leading # is tolerated
+              && anchorSlotIx env "" == Nothing                      -- bare URL: no jump
+              && anchorSlotIx env "no-such-slot" == Nothing          -- unknown: no jump
   putStrLn (if anchorOk then "anchors: OK" else "ANCHORS FAILED")
   putStrLn "== locking: an unmet prerequisite locks its dependents (expect OK) =="
   let apHomItem  = maybe (error "no ap-hom") snd (lookupPuzzleSlot slots "ap-hom")
@@ -550,8 +522,8 @@ hsSelftest = do
 #endif
 #endif
 
-app :: App Model Action
-app = (component initModel updateModel viewModel)
+mkApp :: GameEnv -> Maybe (Either T.Text Int) -> App Model Action
+mkApp env importResult = (component (initModel env importResult) (updateModel env) (viewModel env))
   { mount = Just Init     -- seed solved/viewed/pretest/unlock and the draft
     -- Back/forward (a popstate carrying a new URL fragment) navigates to the
     -- named slot, so the URL hash and the shown slot stay in step. The initial
@@ -566,16 +538,16 @@ slotAnchor :: Slot -> T.Text
 slotAnchor (SlotProse  _ p)   = proseId p
 slotAnchor (SlotPuzzle _ _ z) = puzzleId z
 
-slotAnchorAt :: Int -> T.Text
-slotAnchorAt = slotAnchor . slotAt
+slotAnchorAt :: GameEnv -> Int -> T.Text
+slotAnchorAt env = slotAnchor . slotAt env
 
 -- | The slot index named by a URL fragment, if any matches. A leading @#@ is
 -- tolerated; an empty or unknown fragment yields 'Nothing' (so a bad link or a
 -- bare URL simply stays on slot 0).
-anchorSlotIx :: T.Text -> Maybe Int
-anchorSlotIx raw
+anchorSlotIx :: GameEnv -> T.Text -> Maybe Int
+anchorSlotIx env raw
   | T.null frag = Nothing
-  | otherwise   = fst <$> find ((== frag) . slotAnchor . snd) (zip [0 ..] slots)
+  | otherwise   = fst <$> find ((== frag) . slotAnchor . snd) (zip [0 ..] (envSlots env))
   where
     frag = fromMaybe raw (T.stripPrefix "#" raw)
 
@@ -587,15 +559,15 @@ anchorSlotIx raw
 setHash :: T.Text -> IO ()
 setHash a = let a' = ms a in [js| window.location.hash = ${a'}; |]
 
-initModel :: Model
-initModel = enterSlotPure 0
-  (Model 0 "" NotChecked Set.empty Set.empty Map.empty Set.empty [] False False Nothing False 0)
+initModel :: GameEnv -> Maybe (Either T.Text Int) -> Model
+initModel env importResult = enterSlotPure env 0
+  (Model 0 "" NotChecked Set.empty Set.empty Map.empty Set.empty [] False False importResult False 0)
 
 -- | Set up the model's editor for a slot, without IO. A puzzle slot loads its
 -- template and checks it (so the focused hole and its moves show without a first
 -- manual Check); a prose slot clears the editor. The undo history is reset.
-enterSlotPure :: Int -> Model -> Model
-enterSlotPure i m = case slotAt i of
+enterSlotPure :: GameEnv -> Int -> Model -> Model
+enterSlotPure env i m = case slotAt env i of
   SlotProse _ _ ->
     m { _slotIx = i, _editable = "", _result = NotChecked, _history = []
       , _hintsShown = 0 }
@@ -618,17 +590,17 @@ unlockedKey = "rzk-game-unlocked"
 -- known id is dropped. For backward compatibility a purely numeric token is read
 -- as a legacy /index/, so progress saved by an older build still loads (and is
 -- rewritten in id form on the next save).
-encodeSolved :: Set Int -> MisoString
-encodeSolved = ms . T.intercalate "," . mapMaybe puzzleIdByIx . Set.toList
+encodeSolved :: GameEnv -> Set Int -> MisoString
+encodeSolved env = ms . T.intercalate "," . mapMaybe (puzzleIdByIx env) . Set.toList
 
-decodeSolved :: MisoString -> Set Int
-decodeSolved =
+decodeSolved :: GameEnv -> MisoString -> Set Int
+decodeSolved env =
   Set.fromList . mapMaybe resolve . T.splitOn "," . fromMisoString
   where
     resolve t
-      | T.null t                   = Nothing
-      | Just ix <- puzzleIxById t  = Just ix              -- current id form
-      | otherwise                  = readMaybe (T.unpack t) -- legacy index form
+      | T.null t                       = Nothing
+      | Just ix <- puzzleIxById env t  = Just ix              -- current id form
+      | otherwise                      = readMaybe (T.unpack t) -- legacy index form
 
 -- | A set of ids (viewed prose, unlock overrides) as a comma-separated list. Ids
 -- are kebab-case and contain no commas, so the source needs no escaping.
@@ -655,11 +627,11 @@ decodePretest = Map.fromList . mapMaybe dec . T.splitOn "," . fromMisoString
       [k, "notfamiliar"] | not (T.null k) -> Just (k, NotFamiliar)
       _                                   -> Nothing
 
-readProgress :: IO (Set Int)
-readProgress = maybe Set.empty decodeSolved <$> getLocalStorage progressKey
+readProgress :: GameEnv -> IO (Set Int)
+readProgress env = maybe Set.empty (decodeSolved env) <$> getLocalStorage progressKey
 
-saveProgress :: Set Int -> IO ()
-saveProgress = setLocalStorage progressKey . encodeSolved
+saveProgress :: GameEnv -> Set Int -> IO ()
+saveProgress env = setLocalStorage progressKey . encodeSolved env
 
 readViewed :: IO (Set T.Text)
 readViewed = maybe Set.empty decodeTextSet <$> getLocalStorage viewedKey
@@ -702,9 +674,9 @@ data LoadedState = LoadedState
   , lsFormatOnCheck :: Bool
   }
 
-readLoadedState :: IO LoadedState
-readLoadedState = LoadedState
-  <$> readProgress <*> readViewed <*> readPretest <*> readUnlocked
+readLoadedState :: GameEnv -> IO LoadedState
+readLoadedState env = LoadedState
+  <$> readProgress env <*> readViewed <*> readPretest <*> readUnlocked
   <*> readFormatOnCheck
 
 -- | Per-level draft storage. Each puzzle's in-progress text is saved under its
@@ -712,8 +684,8 @@ readLoadedState = LoadedState
 -- The key is derived from the puzzle's stable id, so reordering levels does not
 -- mix up drafts; a draft for a level no longer in the game lingers, harmlessly
 -- unread. (If an index somehow has no id, fall back to the numeric form.)
-draftKey :: Int -> MisoString
-draftKey i = "rzk-game-draft-" <> ms (fromMaybe (tshow i) (puzzleIdByIx i))
+draftKey :: GameEnv -> Int -> MisoString
+draftKey env i = "rzk-game-draft-" <> ms (fromMaybe (tshow i) (puzzleIdByIx env i))
 
 -- | The pre-id draft key for a puzzle index: @rzk-game-draft-<index>@. Read as a
 -- fallback so a draft saved by an older build is not lost, and cleaned up on
@@ -721,11 +693,11 @@ draftKey i = "rzk-game-draft-" <> ms (fromMaybe (tshow i) (puzzleIdByIx i))
 legacyDraftKey :: Int -> MisoString
 legacyDraftKey i = "rzk-game-draft-" <> ms (show i)
 
-saveDraft :: Int -> MisoString -> IO ()
-saveDraft i = setLocalStorage (draftKey i)
+saveDraft :: GameEnv -> Int -> MisoString -> IO ()
+saveDraft env i = setLocalStorage (draftKey env i)
 
-removeDraft :: Int -> IO ()
-removeDraft i = removeLocalStorage (draftKey i) >> removeLocalStorage (legacyDraftKey i)
+removeDraft :: GameEnv -> Int -> IO ()
+removeDraft env i = removeLocalStorage (draftKey env i) >> removeLocalStorage (legacyDraftKey i)
 
 -- | Read a puzzle's saved draft, falling back to its template when none is
 -- stored, and return the action that installs it. The id-keyed draft is
@@ -733,11 +705,11 @@ removeDraft i = removeLocalStorage (draftKey i) >> removeLocalStorage (legacyDra
 -- progress from an older build survives (and migrates to the id key on the next
 -- save). The index is carried so the update can ignore a stale read after a
 -- quick navigation.
-loadDraftAction :: Int -> IO Action
-loadDraftAction i = do
-  saved <- getLocalStorage (draftKey i)
+loadDraftAction :: GameEnv -> Int -> IO Action
+loadDraftAction env i = do
+  saved  <- getLocalStorage (draftKey env i)
   legacy <- maybe (getLocalStorage (legacyDraftKey i)) (pure . Just) saved
-  pure (ApplyText i (fromMaybe (ms (levelTemplate (nthLevel i))) legacy))
+  pure (ApplyText i (fromMaybe (ms (levelTemplate (nthLevel env i))) legacy))
 
 -- Progress export / import / reset ------------------------------------------
 
@@ -745,10 +717,10 @@ loadDraftAction i = do
 -- fixed keys plus one draft per puzzle. The engine's loaded @game.json@ bundle
 -- (under 'gameJsonKey') is deliberately excluded — it is content, regenerated at
 -- load, not player data.
-playerDataKeys :: [MisoString]
-playerDataKeys =
+playerDataKeys :: GameEnv -> [MisoString]
+playerDataKeys env =
   [progressKey, viewedKey, pretestKey, unlockedKey, formatOnCheckKey]
-    ++ [ k | i <- [0 .. length gameLevels - 1], k <- [draftKey i, legacyDraftKey i] ]
+    ++ [ k | i <- [0 .. length (envLevels env) - 1], k <- [draftKey env i, legacyDraftKey i] ]
 
 -- | Whether a key from an imported archive is player data we will restore. The
 -- four fixed keys, plus any per-level draft (accepted even for an index beyond
@@ -765,61 +737,55 @@ importScratchKey :: MisoString
 importScratchKey = "rzk-game-import"
 
 -- | Read every present player-data key, as @(key, value)@ text pairs.
-gatherProgress :: IO [(T.Text, T.Text)]
-gatherProgress = do
-  vals <- mapM getLocalStorage playerDataKeys
+gatherProgress :: GameEnv -> IO [(T.Text, T.Text)]
+gatherProgress env = do
+  let keys = playerDataKeys env
+  vals <- mapM getLocalStorage keys
   pure [ (fromMisoString k, fromMisoString v)
-       | (k, Just v) <- zip playerDataKeys vals ]
+       | (k, Just v) <- zip keys vals ]
 
 -- | Remove every player-data key, leaving the loaded game bundle in place.
-clearPlayerData :: IO ()
-clearPlayerData = mapM_ removeLocalStorage playerDataKeys
+clearPlayerData :: GameEnv -> IO ()
+clearPlayerData env = mapM_ removeLocalStorage (playerDataKeys env)
 
 -- | Gather the progress and hand it to @download.js@ as one archive file. Called
 -- through the DSL's 'js' QuasiQuoter (like 'renderProseInto') to avoid the @JSString@-arg
 -- codegen bug.
-exportProgress :: IO ()
-exportProgress = do
-  pairs <- gatherProgress
+exportProgress :: GameEnv -> IO ()
+exportProgress env = do
+  pairs <- gatherProgress env
   let ps = encodeArchive pairs
   [js| download ('rzk-game-progress.json', ${ps}) |]
-
--- | Result of the last applied import, set by 'applyPendingImport' before the
--- app starts and read once at 'Init': @Left@ an error message, or @Right@ the
--- number of keys restored.
-{-# NOINLINE importResultRef #-}
-importResultRef :: IORef (Maybe (Either T.Text Int))
-importResultRef = unsafePerformIO (newIORef Nothing)
 
 -- | If @download.js@ stashed an import file (then reloaded), validate it with the
 -- pure 'decodeArchive' and apply it: replace the player-data keys with the
 -- archive's (a full replace, not a merge — so progress not in the archive is
--- cleared), then record the outcome for 'Init' to surface. A malformed or
--- wrong-version archive is rejected with its message and changes nothing. The
+-- cleared), then return the outcome for the initial model to surface. A malformed
+-- or wrong-version archive is rejected with its message and changes nothing. The
 -- scratch key is always consumed, so an import is applied at most once.
-applyPendingImport :: IO ()
-applyPendingImport = do
+applyPendingImport :: GameEnv -> IO (Maybe (Either T.Text Int))
+applyPendingImport env = do
   mraw <- getLocalStorage importScratchKey
   case mraw of
-    Nothing  -> pure ()
+    Nothing  -> pure Nothing
     Just raw -> do
       removeLocalStorage importScratchKey
       case decodeArchive (fromMisoString raw) of
-        Left err  -> writeIORef importResultRef (Just (Left err))
+        Left err  -> pure (Just (Left err))
         Right kvs -> do
           let keep = [ (k, v) | (k, v) <- kvs, isPlayerDataKey k ]
-          clearPlayerData
+          clearPlayerData env
           mapM_ (\(k, v) -> setLocalStorage (ms k) (ms v)) keep
-          writeIORef importResultRef (Just (Right (length keep)))
+          pure (Just (Right (length keep)))
 
 
-updateModel :: Action -> Effect parent props Model Action
-updateModel = \case
+updateModel :: GameEnv -> Action -> Effect parent props Model Action
+updateModel env = \case
   SetEditable s -> do
     editable .= s
     mix <- currentPuzzleIx
     case mix of
-      Just ix -> io_ (saveDraft ix s)
+      Just ix -> io_ (saveDraft env ix s)
       Nothing -> pure ()
   ToggleMap -> mapOpen %= not
   SelectSlot i -> gotoSlot i
@@ -827,23 +793,22 @@ updateModel = \case
   -- to the named slot, unless it is already current or the fragment is unknown.
   HashNav frag -> do
     cur <- use slotIx
-    case anchorSlotIx (fromMisoString frag) of
+    case anchorSlotIx env (fromMisoString frag) of
       Just j | j /= cur -> gotoSlot j
       _                 -> pure ()
   Reset -> withPuzzle $ \ix -> do
     e <- use editable
     history %= (e :)         -- a mistaken Reset can be undone
-    let t = levelTemplate (nthLevel ix)
+    let t = levelTemplate (nthLevel env ix)
     editable .= ms t
-    result   .= checkLevel (nthLevel ix) t
-    io_ (removeDraft ix)     -- drop the draft so the template stays on next load
+    result   .= checkLevel (nthLevel env ix) t
+    io_ (removeDraft env ix)     -- drop the draft so the template stays on next load
   Init -> do
-    io (LoadState <$> readLoadedState)
-    io (SetImportMsg <$> readIORef importResultRef)  -- show an applied import's result
+    io (LoadState <$> readLoadedState env)
     mix <- currentPuzzleIx
     case mix of
-      Just ix -> io (loadDraftAction ix)  -- a puzzle slot 0: restore its draft
-      Nothing -> pure ()                  -- a prose slot 0: LoadState marks it viewed
+      Just ix -> io (loadDraftAction env ix)  -- a puzzle slot 0: restore its draft
+      Nothing -> pure ()                      -- a prose slot 0: LoadState marks it viewed
     -- Honour a slot named in the URL hash (a deep link, or a refresh that kept
     -- the fragment): popstate does not fire on load, so read it once here. A
     -- bare or unknown fragment leaves the player on slot 0.
@@ -856,7 +821,7 @@ updateModel = \case
     -- If slot 0 is prose, it has already been "visited" at mount, so fold it in.
     i <- use slotIx
     let v  = lsViewed ls
-        v' = case slotAt i of
+        v' = case slotAt env i of
                SlotProse _ p -> Set.insert (proseId p) v
                _             -> v
     viewed .= v'
@@ -874,7 +839,7 @@ updateModel = \case
         cur <- use slotIx
         sv  <- use solved
         vw  <- use viewed
-        case nextIncompleteFrom cur sv vw pt of
+        case nextIncompleteFrom env cur sv vw pt of
           Just j  -> issue (SelectSlot j)
           Nothing -> pure ()
       NotFamiliar -> pure ()
@@ -889,17 +854,17 @@ updateModel = \case
     if mix == Just i
       then do
         editable .= s
-        result   .= checkLevel (nthLevel i) (fromMisoString s)
+        result   .= checkLevel (nthLevel env i) (fromMisoString s)
       else pure ()
   Refine ins -> withPuzzle $ \ix -> do
     foc <- use formatOnCheck
     e <- use editable
     history %= (e :)         -- remember the pre-refine text so the tap can be undone
     let e'  = maybeFormat foc (refineFirstHole ins (fromMisoString e))
-        res = checkLevel (nthLevel ix) e'
+        res = checkLevel (nthLevel env ix) e'
     editable .= ms e'
     result   .= res
-    io_ (saveDraft ix (ms e'))
+    io_ (saveDraft env ix (ms e'))
     recordSolved ix res
   Undo -> do
     hs  <- use history
@@ -908,8 +873,8 @@ updateModel = \case
       (prev : rest, Just ix) -> do
         history  .= rest
         editable .= prev
-        result   .= checkLevel (nthLevel ix) (fromMisoString prev)
-        io_ (saveDraft ix prev)
+        result   .= checkLevel (nthLevel env ix) (fromMisoString prev)
+        io_ (saveDraft env ix prev)
       _ -> pure ()
   Check -> withPuzzle $ \ix -> do
     foc <- use formatOnCheck
@@ -918,9 +883,9 @@ updateModel = \case
     -- With format-on-check on, a check first tidies the region in place (an
     -- undoable, saved edit), then checks the formatted text.
     if e /= e0
-      then do history %= (e0 :); editable .= e; io_ (saveDraft ix e)
+      then do history %= (e0 :); editable .= e; io_ (saveDraft env ix e)
       else pure ()
-    let res = checkLevel (nthLevel ix) (fromMisoString e)
+    let res = checkLevel (nthLevel env ix) (fromMisoString e)
     result .= res
     recordSolved ix res
   Format -> withPuzzle $ \ix -> do
@@ -934,14 +899,14 @@ updateModel = \case
       else do
         history %= (e :)         -- formatting can be undone
         editable .= e'
-        result   .= checkLevel (nthLevel ix) (fromMisoString e')
-        io_ (saveDraft ix e')
-  ExportProgress -> io_ exportProgress
+        result   .= checkLevel (nthLevel env ix) (fromMisoString e')
+        io_ (saveDraft env ix e')
+  ExportProgress -> io_ (exportProgress env)
   ImportProgress -> io_ [js|pickImport()|]
   ResetProgress  -> confirmReset .= True
   CancelReset    -> confirmReset .= False
   ConfirmReset   -> do
-    io_ clearPlayerData
+    io_ (clearPlayerData env)
     solved   .= Set.empty
     viewed   .= Set.empty
     pretest  .= Map.empty
@@ -950,7 +915,6 @@ updateModel = \case
     formatOnCheck .= False    -- its key is player data too, cleared above
     confirmReset .= False
     io (pure (SelectSlot 0))   -- back to the start; re-seeds the editor and viewed
-  SetImportMsg v   -> importMsg .= v
   DismissImportMsg -> importMsg .= Nothing
   SetFormatOnCheck b -> do
     formatOnCheck .= b
@@ -959,7 +923,7 @@ updateModel = \case
     -- The button walks the plain hints one at a time; contextual (when-goal)
     -- hints surface on their own, so the count never needs to pass the plain
     -- hints (plus one "ask" to engage a level whose hints are all contextual).
-    let cap = max (plainHintCount (levelHints (nthLevel ix))) 1
+    let cap = max (plainHintCount (levelHints (nthLevel env ix))) 1
     n <- use hintsShown
     if n < cap then hintsShown .= n + 1 else pure ()
   where
@@ -978,8 +942,8 @@ updateModel = \case
       slotIx     .= i
       hintsShown .= 0          -- a fresh level starts with its hints hidden again
       mapOpen    .= False      -- collapse the map after a jump, back to content
-      io_ (setHash (slotAnchorAt i))
-      case slotAt i of
+      io_ (setHash (slotAnchorAt env i))
+      case slotAt env i of
         SlotProse _ p -> do
           editable .= ""
           result   .= NotChecked
@@ -990,12 +954,12 @@ updateModel = \case
           let t = levelTemplate (puzzleLevel z)
           editable .= ms t
           result   .= checkLevel (puzzleLevel z) t
-          io (loadDraftAction ix)
+          io (loadDraftAction env ix)
 
     -- The current slot's global puzzle index, if it is a puzzle.
     currentPuzzleIx = do
       i <- use slotIx
-      pure (puzzleIndexAt i)
+      pure (puzzleIndexAt env i)
 
     -- Run an action only when the current slot is a puzzle, passing its index.
     withPuzzle k = do
@@ -1011,28 +975,28 @@ updateModel = \case
     recordSolved i Solved = do
       e <- use editable
       s <- use solved
-      if Set.member i s || not (gatePassed (nthLevel i) (fromMisoString e))
+      if Set.member i s || not (gatePassed (nthLevel env i) (fromMisoString e))
         then pure ()
         else do
           let s' = Set.insert i s
           solved .= s'
-          io_ (saveProgress s')
+          io_ (saveProgress env s')
     recordSolved _ _ = pure ()
 
-viewModel :: props -> Model -> View Model Action
-viewModel _ m =
+viewModel :: GameEnv -> props -> Model -> View Model Action
+viewModel env _ m =
   H.div_ []
     [ H.header_ [ P.class_ "game" ]
         [ H.h1_ [] [ text "Rzk Game" ]
         , H.p_ [ P.class_ "tagline" ]
             [ text "An interactive Rzk proof game — fill the holes." ]
         ]
-    , navHeader m
+    , navHeader env m
     , importBanner m
     , H.section_ [ P.class_ "level" ]
-        ( case currentSlot m of
-            SlotProse  sid p    -> proseSlotView  m sid p
-            SlotPuzzle sid ix z -> puzzleSlotView m sid ix z
+        ( case currentSlot env m of
+            SlotProse  sid p    -> proseSlotView  env m sid p
+            SlotPuzzle sid ix z -> puzzleSlotView env m sid ix z
         )
     ]
 
@@ -1055,48 +1019,48 @@ importBanner m = case m ^. importMsg of
 -- | A thin, sticky bar that keeps the level content in focus: it shows where the
 -- player is and the overall progress, with a toggle that reveals the full level
 -- map on demand. The map is hidden by default and collapses again after a jump.
-navHeader :: Model -> View Model Action
-navHeader m =
+navHeader :: GameEnv -> Model -> View Model Action
+navHeader env m =
   H.div_ [ P.class_ (ms ("mapbar-wrap" <> if open then " open" else "" :: T.Text)) ]
     [ H.div_ [ P.class_ "mapbar" ]
         [ H.button_ [ P.class_ "map-toggle", H.onClick ToggleMap ]
             [ text (if open then "✕  Close map" else "☰  Levels") ]
         , H.span_ [ P.class_ "mapbar-loc" ]
-            [ text (ms (sectionTitleOf (slotSectionId (currentSlot m)))) ]
+            [ text (ms (sectionTitleOf env (slotSectionId (currentSlot env m)))) ]
         , H.span_ [ P.class_ (ms (progCls :: T.Text)) ]
             [ text (ms (tshow done <> " / " <> tshow total)) ]
         ]
-    , if open then levelMap m else text ""
+    , if open then levelMap env m else text ""
     ]
   where
     open          = m ^. mapOpen
-    (done, total) = overallProgress m
+    (done, total) = overallProgress env m
     progCls       = "mapbar-progress" <> if done == total && total > 0 then " done" else ""
 
 -- | The section title for a section id (empty if unknown).
-sectionTitleOf :: T.Text -> T.Text
-sectionTitleOf sid = maybe "" sectionTitle (find ((== sid) . sectionId) gameSections)
+sectionTitleOf :: GameEnv -> T.Text -> T.Text
+sectionTitleOf env sid = maybe "" sectionTitle (find ((== sid) . sectionId) (envSections env))
 
 -- | The grouped level map: each section is a titled block with its progress count
 -- and a row of slot buttons. Shown only when the map is open. Navigation stays
 -- free — every slot is always reachable; locking only affects a puzzle page.
-levelMap :: Model -> View Model Action
-levelMap m =
+levelMap :: GameEnv -> Model -> View Model Action
+levelMap env m =
   H.div_ [ P.class_ "sections" ]
-    (map sectionBlock gameSections ++ [ progressControls m ])
+    (map sectionBlock (envSections env) ++ [ progressControls m ])
   where
-    indexed = zip [0 ..] slots
+    indexed = zip [0 ..] (envSlots env)
     sectionBlock sec =
       let sid       = sectionId sec
           mine      = [ (i, s) | (i, s) <- indexed, slotSectionId s == sid ]
-          (d, t)    = sectionProgress slots (m ^. solved) (m ^. viewed) (m ^. pretest) sid
+          (d, t)    = sectionProgress (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) sid
       in H.div_ [ P.class_ "section-block" ]
            [ H.div_ [ P.class_ "section-head" ]
                [ H.span_ [ P.class_ "section-title" ] [ text (ms (sectionTitle sec)) ]
                , H.span_ [ P.class_ (ms (countCls d t)) ]
                    [ text (ms (tshow d <> " / " <> tshow t)) ]
                ]
-           , H.div_ [ P.class_ "levels" ] (map (slotButton m) mine)
+           , H.div_ [ P.class_ "levels" ] (map (slotButton env m) mine)
            ]
     countCls :: Int -> Int -> T.Text
     countCls d t = "section-count" <> if d == t && t > 0 then " done" else ""
@@ -1128,8 +1092,8 @@ progressControls m =
 -- number in the corner. State — current, viewed/solved, locked — is carried by
 -- the tile's classes; the full label lives in the @title@ tooltip, so the map
 -- stays succinct as sections and items grow. A locked tile shows a padlock.
-slotButton :: Model -> (Int, Slot) -> View Model Action
-slotButton m (i, s) =
+slotButton :: GameEnv -> Model -> (Int, Slot) -> View Model Action
+slotButton env m (i, s) =
   H.button_
     [ H.onClick (SelectSlot i)
     , P.class_ (ms (T.unwords ("tile" : classes)))
@@ -1149,7 +1113,7 @@ slotButton m (i, s) =
             solvedThis = Set.member ix (m ^. solved)
             familiar   = pre && Map.lookup (puzzleId z) (m ^. pretest) == Just Familiar
             doneThis   = solvedThis || familiar
-            locked = levelLocked slots (m ^. solved) (m ^. unlocked) (m ^. pretest) z
+            locked = levelLocked (envSlots env) (m ^. solved) (m ^. unlocked) (m ^. pretest) z
             roleCls | star      = "tile-star"
                     | pre       = "tile-pretest"
                     | otherwise = "tile-core"
@@ -1198,27 +1162,27 @@ icoLock = svgIcon "0 0 16 16"
   "M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2m3 6V3a3 3 0 0 0-6 0v4a2 2 0 0 1-2 2v5a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 0 1-2-2"
 
 -- | @(done, total)@ over every required slot of the game.
-overallProgress :: Model -> (Int, Int)
-overallProgress m =
-  let req = filter slotRequired slots
+overallProgress :: GameEnv -> Model -> (Int, Int)
+overallProgress env m =
+  let req = filter slotRequired (envSlots env)
   in ( length (filter (slotDone (m ^. solved) (m ^. viewed) (m ^. pretest)) req)
      , length req )
 
 -- | A section breadcrumb shown atop each slot page: the section title and its
 -- "k / n done" count.
-breadcrumb :: Model -> T.Text -> View Model Action
-breadcrumb m sid =
+breadcrumb :: GameEnv -> Model -> T.Text -> View Model Action
+breadcrumb env m sid =
   H.p_ [ P.class_ "breadcrumb" ]
     [ text (ms (title <> " · " <> tshow d <> " / " <> tshow t <> " done")) ]
   where
-    title  = maybe "" sectionTitle (find ((== sid) . sectionId) gameSections)
-    (d, t) = sectionProgress slots (m ^. solved) (m ^. viewed) (m ^. pretest) sid
+    title  = maybe "" sectionTitle (find ((== sid) . sectionId) (envSections env))
+    (d, t) = sectionProgress (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) sid
 
 -- | A prose pseudo-level page: the rendered text, a viewed mark, and a section
 -- "complete" badge when reaching it finishes the section.
-proseSlotView :: Model -> T.Text -> Prose -> [View Model Action]
-proseSlotView m sid p =
-  [ breadcrumb m sid
+proseSlotView :: GameEnv -> Model -> T.Text -> Prose -> [View Model Action]
+proseSlotView env m sid p =
+  [ breadcrumb env m sid
   , H.h2_ []
       [ text (ms ((if isViewed then "✓ " else "") <> roleLabel (proseRole p) <> proseTitle p)) ]
   -- Prose is injected on creation (see InitProse); miso keeps this div an empty
@@ -1229,8 +1193,8 @@ proseSlotView m sid p =
            ] []
   , H.p_ [ P.class_ "viewed-note" ]
       [ text (if isViewed then "✓ Read" else "") ]
-  , sectionDoneBadge m sid
-  , navBar m
+  , sectionDoneBadge env m sid
+  , navBar env m
   ]
   where
     isViewed = Set.member (proseId p) (m ^. viewed)
@@ -1248,9 +1212,9 @@ roleLabel = \case
 
 -- | A puzzle page: goal, prelude, then either the editor (with moves, buttons,
 -- result, and conclusion) or a lock panel. Pre-test puzzles add a self-assessment.
-puzzleSlotView :: Model -> T.Text -> Int -> PuzzleItem -> [View Model Action]
-puzzleSlotView m sid ix z =
-  [ breadcrumb m sid
+puzzleSlotView :: GameEnv -> Model -> T.Text -> Int -> PuzzleItem -> [View Model Action]
+puzzleSlotView env m sid ix z =
+  [ breadcrumb env m sid
   , H.h2_ [] [ text (ms (titleMark <> levelTitle lvl <> roleSuffix)) ]
   -- Level intro prose, injected on creation; keyed by slot so it re-fires.
   , H.div_ [ P.class_ "prose"
@@ -1262,11 +1226,11 @@ puzzleSlotView m sid ix z =
   , preludeView lvl
   ]
   <> body
-  <> [ advanceView m solvedAccepted, navBar m ]
+  <> [ advanceView env m solvedAccepted, navBar env m ]
   <> [ actionBar m | not locked ]   -- the controls, as a sticky footer bar
   where
     lvl       = puzzleLevel z
-    locked    = levelLocked slots (m ^. solved) (m ^. unlocked) (m ^. pretest) z
+    locked    = levelLocked (envSlots env) (m ^. solved) (m ^. unlocked) (m ^. pretest) z
     titleMark = if Set.member ix (m ^. solved) then "✓ " else ""
     roleSuffix = case puzzleRole z of
       Extra   -> " ★"
@@ -1279,9 +1243,9 @@ puzzleSlotView m sid ix z =
     gate           = inventoryViolations lvl (fromMisoString (m ^. editable))
     solvedAccepted = m ^. result == Solved && gatePassed lvl (fromMisoString (m ^. editable))
     body
-      | locked    = [ lockPanel m z ]
+      | locked    = [ lockPanel env m z ]
       | otherwise =
-          pretestControls m z
+          pretestControls env m z
           <> [ H.h3_ [] [ text "Your proof" ]
              , editorView (m ^. editable) (resultErrorLines (m ^. result))
              , H.h3_ [] [ text "Moves" ]
@@ -1300,8 +1264,8 @@ puzzleSlotView m sid ix z =
 
 -- | The self-assessment for a pre-test puzzle: two buttons, the current choice
 -- highlighted, and a remediation box if the player said they are not familiar.
-pretestControls :: Model -> PuzzleItem -> [View Model Action]
-pretestControls m z
+pretestControls :: GameEnv -> Model -> PuzzleItem -> [View Model Action]
+pretestControls env m z
   | puzzleRole z /= PreTest = []
   | otherwise =
       [ H.div_ [ P.class_ "pretest" ]
@@ -1312,11 +1276,11 @@ pretestControls m z
                 , choice NotFamiliar "Not familiar yet"
                 ]
             , H.p_ [ P.class_ "pretest-note" ]
-                [ text "“I already know this” counts the pre-test as done and jumps you to the next unfinished step." ]
+                [ text "\x201cI already know this\x201d counts the pre-test as done and jumps you to the next unfinished step." ]
             ]
             <> case ans of
                  Just NotFamiliar ->
-                   [ remedyBox "No problem — review this first, then come back:"
+                   [ remedyBox env "No problem — review this first, then come back:"
                                (puzzleRemedy z) ]
                  _ -> [] )
       ]
@@ -1330,43 +1294,43 @@ pretestControls m z
 -- | The lock panel shown in place of the editor when a prerequisite is not yet
 -- met. It names the unmet prerequisites, offers a jump to each (and any
 -- remediation), and an "Unlock anyway" escape so a player is never trapped.
-lockPanel :: Model -> PuzzleItem -> View Model Action
-lockPanel m z =
+lockPanel :: GameEnv -> Model -> PuzzleItem -> View Model Action
+lockPanel env m z =
   H.div_ [ P.class_ "locked" ]
     ( [ H.p_ [] [ text (ms msg) ]
       , H.div_ [ P.class_ "lock-jumps" ] (map jumpTo blockers)
       ]
-      <> [ remedyBox "Recommended before this level:" remedies | not (null remedies) ]
+      <> [ remedyBox env "Recommended before this level:" remedies | not (null remedies) ]
       <> [ H.button_ [ P.class_ "secondary", H.onClick (Unlock (puzzleId z)) ]
              [ text "Unlock anyway" ] ]
     )
   where
-    blockers = unmetPrereqs slots (m ^. solved) (m ^. pretest) z
+    blockers = unmetPrereqs (envSlots env) (m ^. solved) (m ^. pretest) z
     remedies = concatMap puzzleRemedy blockers
     names    = T.intercalate ", " (map (levelTitle . puzzleLevel) blockers)
     msg      = "🔒 Locked — finish " <> names <> " first."
-    jumpTo pz = case puzzleSlotIndex (puzzleId pz) of
+    jumpTo pz = case puzzleSlotIndex env (puzzleId pz) of
       Just i  -> H.button_ [ P.class_ "remedy-link", H.onClick (SelectSlot i) ]
                    [ text (ms ("Go to: " <> levelTitle (puzzleLevel pz))) ]
       Nothing -> text ""
 
 -- | A box of remediation links. External targets are anchors; in-game targets
 -- are buttons that navigate to the relevant slot.
-remedyBox :: T.Text -> [Remedy] -> View Model Action
-remedyBox heading rs
+remedyBox :: GameEnv -> T.Text -> [Remedy] -> View Model Action
+remedyBox env heading rs
   | null rs   = text ""
   | otherwise =
       H.div_ [ P.class_ "remedy" ]
         ( H.p_ [ P.class_ "remedy-head" ] [ text (ms heading) ]
-        : map remedyLink rs )
+        : map (remedyLink env) rs )
 
-remedyLink :: Remedy -> View Model Action
-remedyLink (Remedy lbl tgt) = case tgt of
+remedyLink :: GameEnv -> Remedy -> View Model Action
+remedyLink env (Remedy lbl tgt) = case tgt of
   ToExternal url ->
     H.a_ [ P.href_ (ms url), P.target_ "_blank", P.class_ "remedy-link" ]
       [ text (ms lbl) ]
-  ToSection sid -> jump (sectionFirstSlot sid)
-  ToLevel pid   -> jump (puzzleSlotIndex pid)
+  ToSection sid -> jump (sectionFirstSlot env sid)
+  ToLevel pid   -> jump (puzzleSlotIndex env pid)
   where
     jump = \case
       Just i  -> H.button_ [ P.class_ "remedy-link", H.onClick (SelectSlot i) ]
@@ -1374,26 +1338,26 @@ remedyLink (Remedy lbl tgt) = case tgt of
       Nothing -> H.span_ [ P.class_ "remedy-link" ] [ text (ms lbl) ]
 
 -- | The slot index of the first item in a section / of a puzzle by id.
-sectionFirstSlot :: T.Text -> Maybe Int
-sectionFirstSlot sid =
-  fst <$> find ((== sid) . slotSectionId . snd) (zip [0 ..] slots)
+sectionFirstSlot :: GameEnv -> T.Text -> Maybe Int
+sectionFirstSlot env sid =
+  fst <$> find ((== sid) . slotSectionId . snd) (zip [0 ..] (envSlots env))
 
-puzzleSlotIndex :: T.Text -> Maybe Int
-puzzleSlotIndex pid = fst <$> find (isPuz . snd) (zip [0 ..] slots)
+puzzleSlotIndex :: GameEnv -> T.Text -> Maybe Int
+puzzleSlotIndex env pid = fst <$> find (isPuz . snd) (zip [0 ..] (envSlots env))
   where
     isPuz (SlotPuzzle _ _ z) = puzzleId z == pid
     isPuz _                  = False
 
 -- | A "section complete" badge, shown on a prose page once every required slot
 -- of the section is done (so a summary block doubles as a completion marker).
-sectionDoneBadge :: Model -> T.Text -> View Model Action
-sectionDoneBadge m sid
-  | sectionComplete slots (m ^. solved) (m ^. viewed) (m ^. pretest) sid =
+sectionDoneBadge :: GameEnv -> Model -> T.Text -> View Model Action
+sectionDoneBadge env m sid
+  | sectionComplete (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) sid =
       H.p_ [ P.class_ "section-complete" ]
         [ text (ms ("🎉 Section complete: " <> title)) ]
   | otherwise = text ""
   where
-    title = maybe "" sectionTitle (find ((== sid) . sectionId) gameSections)
+    title = maybe "" sectionTitle (find ((== sid) . sectionId) (envSections env))
 
 -- | The level's read-only prelude. It is reference material, not the focus, so
 -- it is collapsed by default; opening it reveals the given definitions,
@@ -1536,8 +1500,8 @@ gateView lvl res violations
   where
     names = T.intercalate ", " violations
     hardMsg = case res of
-      Solved -> "🔒 So close — but this level grants only the moves under “Allowed here”, and your proof uses "
-      _      -> "🔒 Not allowed here — this level grants only the moves under “Allowed here”, not "
+      Solved -> "🔒 So close — but this level grants only the moves under \x201c\&Allowed here\x201d, and your proof uses "
+      _      -> "🔒 Not allowed here — this level grants only the moves under \x201c\&Allowed here\x201d, not "
 
 -- | The focused hole's rendered goal, if the proof currently has holes. This is
 -- what a hint's @when-goal@ trigger is matched against.
@@ -1586,13 +1550,13 @@ hintsView m lvl
 -- | When the level is solved, offer a step onward: the next /incomplete/ slot
 -- (an unviewed prose or an unsolved required puzzle), searching forward and
 -- wrapping past the end. A closing line shows once everything is done.
-advanceView :: Model -> Bool -> View Model Action
-advanceView m accepted
+advanceView :: GameEnv -> Model -> Bool -> View Model Action
+advanceView env m accepted
   | accepted =
-      case nextIncomplete m of
+      case nextIncomplete env m of
         Just j  -> H.div_ [ P.class_ "advance" ]
                      [ H.button_ [ H.onClick (SelectSlot j) ]
-                         [ text (ms ("Next: " <> slotLabel (slotAt j))) ] ]
+                         [ text (ms ("Next: " <> slotLabel (slotAt env j))) ] ]
         Nothing -> H.div_ [ P.class_ "advance" ]
                      [ H.p_ [ P.class_ "all-done" ]
                          [ text "🏆 You've finished every activity. The end — for now!" ] ]
@@ -1600,32 +1564,32 @@ advanceView m accepted
 
 -- | The next incomplete /required/ slot, searching forward from the current one
 -- and wrapping past the end. 'Nothing' when everything required is done.
-nextIncomplete :: Model -> Maybe Int
-nextIncomplete m =
-  nextIncompleteFrom (_slotIx m) (m ^. solved) (m ^. viewed) (m ^. pretest)
+nextIncomplete :: GameEnv -> Model -> Maybe Int
+nextIncomplete env m =
+  nextIncompleteFrom env (_slotIx m) (m ^. solved) (m ^. viewed) (m ^. pretest)
 
 -- | 'nextIncomplete' over the bare progress components, so the update function
 -- can call it without reassembling a 'Model'.
 nextIncompleteFrom
-  :: Int -> Set Int -> Set T.Text -> Map T.Text PretestAnswer -> Maybe Int
-nextIncompleteFrom cur solvedIxs viewedIds answers = find incomplete order
+  :: GameEnv -> Int -> Set Int -> Set T.Text -> Map T.Text PretestAnswer -> Maybe Int
+nextIncompleteFrom env cur solvedIxs viewedIds answers = find incomplete order
   where
-    n     = totalSlots
+    n     = length (envSlots env)
     order = [ (cur + k) `mod` n | k <- [1 .. n - 1] ]
     incomplete i =
-      let s = slotAt i
+      let s = slotAt env i
       in slotRequired s && not (slotDone solvedIxs viewedIds answers s)
 
 -- | A linear navigation bar over all slots: previous, the current slot's label,
 -- then next. Adjacent navigation, disabled at the ends; the picker above remains
 -- the way to jump anywhere.
-navBar :: Model -> View Model Action
-navBar m =
+navBar :: GameEnv -> Model -> View Model Action
+navBar env m =
   H.div_ [ P.class_ "nav" ]
     [ navButton "prev" "← Previous: " (cur - 1) (cur > 0)
     , H.span_ [ P.class_ "nav-current" ]
-        [ text (ms ("Step " <> tshow (cur + 1) <> " / " <> tshow totalSlots)) ]
-    , navButton "next" "Next: " (cur + 1) (cur < totalSlots - 1)
+        [ text (ms ("Step " <> tshow (cur + 1) <> " / " <> tshow (length (envSlots env)))) ]
+    , navButton "next" "Next: " (cur + 1) (cur < length (envSlots env) - 1)
     ]
   where
     cur = _slotIx m
@@ -1635,7 +1599,7 @@ navBar m =
                   , H.onClick (SelectSlot j) ]
                     <> [ P.disabled_ | not enabled ] )
         [ text (ms (if enabled
-                      then prefix <> slotLabel (slotAt j)
+                      then prefix <> slotLabel (slotAt env j)
                       else if dir == "prev" then "← Previous" else "Next →")) ]
 
 -- | A short human label for a slot, for the nav bar.
