@@ -54,6 +54,7 @@ data Level = Level
   , levelSolution   :: Text   -- ^ a reference solution (for self-tests)
   , levelGoalName   :: Text   -- ^ the definition the player must produce
   , levelGoalType   :: Text   -- ^ its required (closed) type, enforced on check
+  , levelGoalUses   :: [Text] -- ^ assumptions the goal-check declares via @uses (…)@
   , levelInventory  :: [Text] -- ^ names available to the player
   , levelHints      :: [Hint] -- ^ authored hints, revealed on request
   , levelGated      :: Bool   -- ^ make an inventory violation fail the check
@@ -262,15 +263,24 @@ parseErrorLine msg =
 -- level pins the definition the player must produce ('levelGoalName') and its
 -- required type ('levelGoalType'), and we append a synthetic check
 --
--- > #def __rzkgame_goal_check : <levelGoalType> := <levelGoalName>
+-- > #def __rzkgame_goal_check uses (…) : <levelGoalType> := <levelGoalName>
 --
 -- so the proof only counts as solved when a definition of that name with that
 -- type is in scope and hole-free. The player is free to add helper definitions;
 -- only the named goal is pinned. A missing or mistyped goal makes the synthetic
 -- check fail to typecheck, and is reported like any other error.
+--
+-- The @uses (…)@ clause carries 'levelGoalUses' — the assumptions the goal
+-- definition transitively depends on. rzk requires a definition to declare every
+-- in-scope assumption (@#assume@d variable, e.g. @funext@) it uses, so without
+-- this the synthetic check would be rejected for a goal built on such an
+-- assumption. The clause is omitted when the goal uses nothing.
 checkLevel :: Level -> Text -> CheckResult
 checkLevel lvl editable =
-  let goalCheck = "\n#def __rzkgame_goal_check : " <> levelGoalType lvl
+  let usesClause = case levelGoalUses lvl of
+        [] -> ""
+        us -> " uses (" <> T.intercalate ", " us <> ")"
+      goalCheck = "\n#def __rzkgame_goal_check" <> usesClause <> " : " <> levelGoalType lvl
                     <> "\n  := " <> levelGoalName lvl
       src = levelPrelude lvl <> "\n" <> editable <> goalCheck
       -- the level's "Allowed here" lemmas, offered to rzk as hole candidates so

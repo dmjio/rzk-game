@@ -44,7 +44,34 @@ main = do
   flip mapM_ (zip [1 :: Int ..] gameLevels) $ \(n, lvl) ->
     check ("level " <> show n <> " (" <> T.unpack (levelTitle lvl) <> ") goal")
           (goalFromTemplate (levelTemplate lvl)
-             == Right (levelGoalName lvl, levelGoalType lvl))
+             == Right (levelGoalName lvl, levelGoalType lvl, levelGoalUses lvl))
+
+  -- 1b. The `uses (…)` clause. goalFromTemplate recovers it from the template's
+  --     #def, and checkLevel carries it into the synthetic goal-check. rzk
+  --     requires a definition to declare every in-scope assumption it
+  --     transitively uses, so a goal built on an `#assume`d variable only solves
+  --     when the check declares it — dropping the clause makes the same proof
+  --     fail. (No built-in level uses an assumption yet; this pins the machinery
+  --     the funext levels need.)
+  putStrLn "== uses: goalFromTemplate recovers `uses (…)`; checkLevel carries it =="
+  check "goalFromTemplate reads a uses clause"
+    (goalFromTemplate "#def goal uses (A) : U\n  := ?" == Right ("goal", "U", ["A"]))
+  check "goalFromTemplate: no uses clause yields []"
+    (goalFromTemplate "#def goal (x : U) : U\n  := ?" == Right ("goal", "(x : U) → U", []))
+  let usesLevel us = Level
+        { levelTitle = "uses", levelIntro = "", levelStatement = "U"
+        , levelPrelude = "#lang rzk-1\n#assume A : U"
+        , levelTemplate = "#def goal uses (A) : U\n  := ?"
+        , levelSolution = "#def goal uses (A) : U\n  := A"
+        , levelGoalName = "goal", levelGoalType = "U", levelGoalUses = us
+        , levelInventory = [], levelHints = [], levelGated = False
+        , levelConclusion = "" }
+  check "checkLevel solves when the goal-check declares the assumption"
+    (checkLevel (usesLevel ["A"]) (levelSolution (usesLevel ["A"])) == Solved)
+  check "checkLevel fails the same proof when the uses clause is dropped"
+    (case checkLevel (usesLevel []) (levelSolution (usesLevel [])) of
+       TypeError _ _ -> True
+       _             -> False)
 
   -- 2. The block splitter recovers the three role blocks (ignoring prose and
   --    other fences); levelProse recovers the intro and the conclusion.
@@ -54,7 +81,7 @@ main = do
     , "#def my-id (A : U) (x : A)\n  : hom A x x\n  := ?\n"
     , "#def my-id (A : U) (x : A)\n  : hom A x x\n  := \\ t → x\n" ))
   check "splitter then goal" (case splitLevelSource sampleBody of
-    Right (_, tmpl, _) -> goalFromTemplate tmpl == Right ("my-id", "(A : U) → (x : A) → hom A x x")
+    Right (_, tmpl, _) -> goalFromTemplate tmpl == Right ("my-id", "(A : U) → (x : A) → hom A x x", [])
     _                  -> False)
   check "levelProse intro/conclusion"
     (levelProse sampleBody

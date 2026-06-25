@@ -336,6 +336,7 @@ idMorphismLevel = Level
       ]
   , levelGoalName  = "my-id"
   , levelGoalType  = "(A : U) → (x : A) → hom A x x"
+  , levelGoalUses  = []
   , levelInventory =
       [ "x        : A"
       , "λ-intro  : introduce the interval coordinate"
@@ -373,6 +374,7 @@ constTriangleLevel = Level
   , levelGoalName  = "const-triangle"
   , levelGoalType  =
       "(A : U) → (x : A) → hom2 A x x x (id-hom A x) (id-hom A x) (id-hom A x)"
+  , levelGoalUses  = []
   , levelInventory =
       [ "x        : A"
       , "id-hom   : (A : U) → (x : A) → hom A x x"
@@ -408,6 +410,7 @@ hom2Level = Level
   , levelGoalType  =
       "(A : U) → (x : A) → (y : A) → (f : hom A x y) \
       \→ hom2 A x y y f (id-hom A y) f"
+  , levelGoalUses  = []
   , levelInventory =
       [ "f        : hom A x y"
       , "id-hom   : (A : U) → (x : A) → hom A x x"
@@ -447,6 +450,7 @@ homLeftUnitLevel = Level
   , levelGoalType  =
       "(A : U) → (x : A) → (y : A) → (f : hom A x y) \
       \→ hom2 A x x y (id-hom A x) f f"
+  , levelGoalUses  = []
   , levelInventory =
       [ "f        : hom A x y"
       , "id-hom   : (A : U) → (x : A) → hom A x x"
@@ -482,6 +486,7 @@ mapPointLevel = Level
   , levelGoalName  = "map-point"
   , levelGoalType  =
       "(A : U) → (B : U) → (g : A → B) → (x : A) → hom B (g x) (g x)"
+  , levelGoalUses  = []
   , levelInventory =
       [ "g        : A → B"
       , "x        : A"
@@ -519,6 +524,7 @@ apHomLevel = Level
   , levelGoalType  =
       "(A : U) → (B : U) → (g : A → B) → (x : A) → (y : A) \
       \→ (f : hom A x y) → hom B (g x) (g y)"
+  , levelGoalUses  = []
   , levelInventory =
       [ "g        : A → B"
       , "f        : hom A x y"
@@ -562,6 +568,7 @@ composeLevel = Level
   , levelGoalType  =
       "(A : U) → (is-segal-A : is-segal A) → (x : A) → (y : A) → (z : A) \
       \→ (f : hom A x y) → (g : hom A y z) → hom A x z"
+  , levelGoalUses  = []
   , levelInventory =
       [ "is-segal-A : is-segal A"
       , "is-segal-A x y z f g : is-contr (Σ (h : hom A x z) , hom2 …)"
@@ -605,6 +612,7 @@ composeWitnessLevel = Level
       "(A : U) → (is-segal-A : is-segal A) → (x : A) → (y : A) → (z : A) \
       \→ (f : hom A x y) → (g : hom A y z) \
       \→ hom2 A x y z f g (first (first (is-segal-A x y z f g)))"
+  , levelGoalUses  = []
   , levelInventory =
       [ "is-segal-A : is-segal A"
       , "first (is-segal-A x y z f g) : (composite , witness) pair"
@@ -651,6 +659,7 @@ unfoldingSquareLevel = Level
       ]
   , levelGoalName  = "unfolding-square"
   , levelGoalType  = "(A : U) → (triangle : Δ² → A) → Δ¹×Δ¹ → A"
+  , levelGoalUses  = []
   , levelInventory =
       [ "triangle : Δ² → A"
       , "recOR    : split on a pair of covering topes (here t ≤ s / s ≤ t)"
@@ -700,6 +709,7 @@ witnessSquareLevel = Level
   , levelGoalType  =
       "(A : U) → (is-segal-A : is-segal A) → (x : A) → (y : A) → (z : A) \
       \→ (f : hom A x y) → (g : hom A y z) → Δ¹×Δ¹ → A"
+  , levelGoalUses  = []
   , levelInventory =
       [ "unfolding-square    : (A : U) → (Δ² → A) → Δ¹×Δ¹ → A"
       , "witness-comp-is-segal : the composition witness triangle"
@@ -739,6 +749,7 @@ idArrLevel = Level
       ]
   , levelGoalName  = "id-arr-in-arr"
   , levelGoalType  = "(A : U) → (f : arr A) → hom (arr A) f f"
+  , levelGoalUses  = []
   , levelInventory =
       [ "f        : arr A   (an arrow of A)"
       , "f s      : A       the arrow f at its own coordinate s"
@@ -788,6 +799,7 @@ arrInArrLevel = Level
   , levelGoalType  =
       "(A : U) → (is-segal-A : is-segal A) → (x : A) → (y : A) → (z : A) \
       \→ (f : hom A x y) → (g : hom A y z) → hom (arr A) f g"
+  , levelGoalUses  = []
   , levelInventory =
       [ "witness-square-comp-is-segal : the composition square Δ¹×Δ¹ → A"
       , "f , g    : the endpoints, now points of arr A"
@@ -860,6 +872,7 @@ witnessAssocLevel = Level
       \(comp-is-segal (arr A) (is-segal-arr A is-segal-A) f g h \
       \(arr-in-arr-is-segal A is-segal-A w x y f g) \
       \(arr-in-arr-is-segal A is-segal-A x y z g h))"
+  , levelGoalUses  = []
   , levelInventory =
       [ "witness-comp-is-segal : the witness, here applied in arr A"
       , "is-segal-arr A is-segal-A : arr A is Segal (taken as given)"
@@ -910,6 +923,7 @@ tetrahedronLevel = Level
   , levelGoalType  =
       "(A : U) → (is-segal-A : is-segal A) → (w : A) → (x : A) → (y : A) → (z : A) \
       \→ (f : hom A w x) → (g : hom A x y) → (h : hom A y z) → Δ³ → A"
+  , levelGoalUses  = []
   , levelInventory =
       [ "witness-associative-is-segal : the prism Δ²×Δ¹ → A, as a curried witness"
       , "((t , s) , r) : the Δ³ coordinates"
@@ -958,6 +972,7 @@ tripleCompLevel = Level
   , levelGoalType  =
       "(A : U) → (is-segal-A : is-segal A) → (w : A) → (x : A) → (y : A) → (z : A) \
       \→ (f : hom A w x) → (g : hom A x y) → (h : hom A y z) → hom A w z"
+  , levelGoalUses  = []
   , levelInventory =
       [ "tetrahedron-associative-is-segal : the tetrahedron Δ³ → A"
       , "((t , t) , t) : the fully degenerate point, the main diagonal"

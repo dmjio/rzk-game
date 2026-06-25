@@ -70,7 +70,7 @@ puzzleFrom files ref = do
   let m    = fileMeta f
       body = fileBody f
   (prelude, template, solution) <- splitLevelSource body
-  (goalName, goalType)          <- goalFromTemplate template
+  (goalName, goalType, goalUses) <- goalFromTemplate template
   let (intro, conclusion) = levelProse body
       lvl = Level
         { levelTitle      = metaTitle m
@@ -81,6 +81,7 @@ puzzleFrom files ref = do
         , levelSolution   = solution
         , levelGoalName   = goalName
         , levelGoalType   = goalType
+        , levelGoalUses   = goalUses
         , levelInventory  = metaInventory m
         , levelHints      = metaHints m
         , levelGated      = metaGated m
