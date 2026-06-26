@@ -1,9 +1,5 @@
 ---
 id: map-point
-inventory:
-- 'g        : A → B'
-- 'x        : A'
-- 'λ-intro  : introduce the interval coordinate'
 statement: hom B (g x) (g x)
 title: A function on a point
 ---

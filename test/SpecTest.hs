@@ -28,8 +28,8 @@ import           RzkGame.Loader       (buildGame)
 import           RzkGame.Section
 import           RzkGame.Save         (decodeArchive, encodeArchive)
 import           RzkGame.Format       (formatEditable, isWellFormatted)
-import           RzkGame.Spec         (goalFromTemplate, levelProse,
-                                      splitLevelSource)
+import           RzkGame.Spec         (goalFromTemplate, inventoryType,
+                                      levelProse, splitLevelSource)
 import qualified Data.List            as List
 
 main :: IO ()
@@ -253,7 +253,7 @@ main = do
   -- is still flagged. So the soft notice only ever points at a name the intended
   -- solution does without.
   let wsBare = ws { levelInventory =
-                      filter (not . T.isPrefixOf "witness-comp-is-segal")
+                      filter ((/= "witness-comp-is-segal") . invName)
                              (levelInventory ws) }
   check "a lemma the solution uses is not flagged even when ungranted"
     (null (inventoryViolations wsBare (levelSolution wsBare)))
@@ -267,6 +267,20 @@ main = do
   check "a non-gated level never fails the gate"
     (gatePassed (head gameLevels) "#def x := whatever-undefined-thing")
 
+  -- 10c. inventoryType: the syntactic prelude lookup recovers a granted lemma's
+  --      as-written declared type in closed Π-form — for both a #def (id-hom) and
+  --      a #postulate (is-segal-arr) — and yields Nothing for a name the prelude
+  --      does not define. This is the type the inventory panel shows by default.
+  putStrLn "== inventoryType: the prelude lookup recovers a lemma's declared type =="
+  check "a #def lemma resolves to its closed declared type"
+    (inventoryType (levelPrelude ws) "id-hom"
+       == Just "(A : U) → (x : A) → hom A x x")
+  check "a #postulate resolves to its declared type"
+    (inventoryType (levelPrelude ws) "is-segal-arr"
+       == Just "( A : U) → (is-segal-A : is-segal A) → is-segal (arr A)")
+  check "a name the prelude does not define resolves to Nothing"
+    (inventoryType (levelPrelude ws) "no-such-lemma" == Nothing)
+
   -- 10b. Allow-list: checkLevel forwards a level's granted lemmas to rzk
   --     (typecheckModulesWithHolesAndLemmas), so a granted top-level lemma
   --     surfaces among a hole's candidate moves, applied to holes. The plain
@@ -276,7 +290,7 @@ main = do
   --     id-hom, which its goal is built from.
   putStrLn "== allow-list: a granted lemma surfaces as a hole candidate move =="
   let ctl   = head [ l | l <- gameLevels, levelTitle l == "The constant triangle" ]
-      grants = [ n | e <- levelInventory ctl, n <- take 1 (T.words e) ]
+      grants = map invName (levelInventory ctl)
       moves  = case checkLevel ctl (levelTemplate ctl) of
                  Holes hs -> concatMap hvMoves hs
                  _        -> []
@@ -426,7 +440,8 @@ fileV (SProse p) = object
 fileV (SPuzzle z) = object
   [ "meta" .= object
       ( [ "id" .= puzzleId z, "title" .= levelTitle lvl
-        , "statement" .= levelStatement lvl, "inventory" .= levelInventory lvl ]
+        , "statement" .= levelStatement lvl
+        , "inventory" .= map entryV (levelInventory lvl) ]
         <> [ "hints" .= map hintV (levelHints lvl) | not (null (levelHints lvl)) ]
         <> [ "gated" .= True | levelGated lvl ] )
   , "body" .= levelBody lvl
@@ -436,6 +451,14 @@ fileV (SPuzzle z) = object
 -- | A front-matter hint as JSON: @text@ and an optional @when-goal@.
 hintV :: Hint -> Value
 hintV (Hint t mg) = object (("text" .= t) : [ "when-goal" .= g | Just g <- [mg] ])
+
+-- | An inventory entry as JSON: the @{ name, type?, synopsis? }@ object form
+-- 'RzkGame.Spec.parseInventoryEntry' reads back, so the bundle round-trips.
+entryV :: InventoryEntry -> Value
+entryV (InventoryEntry n mty msyn) = object
+  ( ("name" .= n)
+    : [ "type"     .= t | Just t <- [mty] ]
+   <> [ "synopsis" .= s | Just s <- [msyn] ] )
 
 refPath :: SectionItem -> Text
 refPath (SProse p)  = "levels/" <> proseId p <> ".md"

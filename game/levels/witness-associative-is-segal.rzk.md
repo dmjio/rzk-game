@@ -1,11 +1,12 @@
 ---
 id: witness-associative-is-segal
 inventory:
-- 'witness-comp-is-segal : the witness, here applied in arr A'
-- 'is-segal-arr A is-segal-A : arr A is Segal (taken as given)'
-- 'arr-in-arr-is-segal … w x y f g : the (f,g) composition arrow'
-- 'arr-in-arr-is-segal … x y z g h : the (g,h) composition arrow'
-- 'arr A    : the arrow type Δ¹ → A, worked in here'
+- name: witness-comp-is-segal
+  synopsis: the witness, here applied in arr A
+- name: is-segal-arr
+  synopsis: arr A is Segal (taken as given)
+- name: arr-in-arr-is-segal
+  synopsis: the composition arrows being composed
 statement: hom2 (arr A) f g h …
 title: Composing the witnesses
 ---

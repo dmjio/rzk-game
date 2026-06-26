@@ -50,6 +50,7 @@ import           RzkGame.Format     (formatEditable)
 import           RzkGame.Loader     (buildGame)
 import           RzkGame.Save       (decodeArchive, encodeArchive)
 import           RzkGame.Section
+import           RzkGame.Spec       (inventoryType)
 
 -- | Inject rendered prose (Markdown/TeX via @prose.js@) into a div miso has just
 -- created, given its 'DOMRef' from an @onCreatedWith@ hook.
@@ -1509,9 +1510,11 @@ actionBar m =
         ]
     ]
 
--- | The collapsible "Allowed here" list: the lemmas and moves the level grants,
--- the visible reference for the inventory gate. Reuses 'levelInventory' (the
--- per-entry display strings) and is hidden on a level with an empty inventory.
+-- | The collapsible "Allowed here" list: the granted prelude lemmas the level
+-- allows, the visible reference for the inventory gate. Each entry renders its
+-- name and type in monospace and its optional synopsis in regular prose; the
+-- type is the entry's 'invType' override if given, else looked up from the
+-- prelude by name ('inventoryType'). Hidden on a level with an empty inventory.
 inventoryView :: Level -> View Model Action
 inventoryView lvl
   | null (levelInventory lvl) = text ""
@@ -1519,11 +1522,27 @@ inventoryView lvl
       H.details_ [ P.class_ "inventory-wrap" ]
         [ H.summary_ [] [ text (ms summary) ]
         , H.ul_ [ P.class_ "inventory" ]
-            [ H.li_ [] [ text (ms e) ] | e <- levelInventory lvl ]
+            [ H.li_ [] (entryView e) | e <- levelInventory lvl ]
         ]
   where
     summary :: T.Text
     summary = if levelGated lvl then "Allowed here (gated)" else "Allowed here"
+
+    -- The name + resolved type in a monospace slot, then the synopsis (if any)
+    -- in a prose slot. The two slots are visually distinct (see the CSS), so the
+    -- signature reads as code and the note as prose.
+    entryView :: InventoryEntry -> [View Model Action]
+    entryView e =
+         [ H.span_ [ P.class_ "inv-sig" ] [ text (ms sig) ] ]
+      <> [ H.span_ [ P.class_ "inv-syn" ] [ text (ms (" — " <> s)) ]
+         | Just s <- [invSynopsis e] ]
+      where
+        sig = case resolvedType of
+          Just ty -> invName e <> " : " <> ty
+          Nothing -> invName e
+        resolvedType = case invType e of
+          Just ty -> Just ty
+          Nothing -> inventoryType (levelPrelude lvl) (invName e)
 
 -- | The inventory-gate notice: the prelude lemmas the proof uses that are
 -- neither granted nor needed by the intended solution (see 'inventoryViolations',

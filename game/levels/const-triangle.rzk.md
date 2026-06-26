@@ -1,9 +1,8 @@
 ---
 id: const-triangle
 inventory:
-- 'x        : A'
-- 'id-hom   : (A : U) → (x : A) → hom A x x'
-- 'λ-intro  : introduce the two cube coordinates'
+- name: id-hom
+  synopsis: the identity morphism at a point
 statement: hom2 A x x x (id-hom A x) (id-hom A x) (id-hom A x)
 title: The constant triangle
 ---

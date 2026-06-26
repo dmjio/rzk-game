@@ -1,9 +1,5 @@
 ---
 id: id-arr-in-arr
-inventory:
-- 'f        : arr A   (an arrow of A)'
-- 'f s      : A       the arrow f at its own coordinate s'
-- 'λ-intro  : two coordinates — t between arrows, s along the arrow'
 statement: hom (arr A) f f
 title: An identity between arrows
 ---

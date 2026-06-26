@@ -1,10 +1,5 @@
 ---
 id: compose
-inventory:
-- 'is-segal-A : is-segal A'
-- 'is-segal-A x y z f g : is-contr (Σ (h : hom A x z) , hom2 …)'
-- 'first      : the centre of a contractible type / first of a pair'
-- 'second     : the second component of a pair'
 statement: hom A x z
 title: Composition
 ---

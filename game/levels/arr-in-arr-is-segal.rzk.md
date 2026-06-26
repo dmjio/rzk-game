@@ -1,9 +1,8 @@
 ---
 id: arr-in-arr-is-segal
 inventory:
-- 'witness-square-comp-is-segal : the composition square Δ¹×Δ¹ → A'
-- 'f , g    : the endpoints, now points of arr A'
-- 'λ-intro  : t slides from f to g; s runs along the arrow at (t , s)'
+- name: witness-square-comp-is-segal
+  synopsis: the composition square Δ¹×Δ¹ → A
 statement: hom (arr A) f g
 title: An arrow between arrows
 ---

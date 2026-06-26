@@ -393,10 +393,7 @@ idMorphismLevel = Level
   , levelGoalName  = "my-id"
   , levelGoalType  = "(A : U) → (x : A) → hom A x x"
   , levelGoalUses  = []
-  , levelInventory =
-      [ "x        : A"
-      , "λ-intro  : introduce the interval coordinate"
-      ]
+  , levelInventory = []
   , levelHints      =
       [ Hint "Both endpoints of the path are the same point $x$, so you never need to move along the interval." Nothing
       , Hint "Right now the goal is still the whole path type `(t : 2 | Δ¹ t) → …`. Your first move is to introduce the interval coordinate: tap `λ-intro` or type `\\ t → ?`. Then return $x$." (Just "Δ¹ t")
@@ -432,10 +429,7 @@ constTriangleLevel = Level
       "(A : U) → (x : A) → hom2 A x x x (id-hom A x) (id-hom A x) (id-hom A x)"
   , levelGoalUses  = []
   , levelInventory =
-      [ "x        : A"
-      , "id-hom   : (A : U) → (x : A) → hom A x x"
-      , "λ-intro  : introduce the two cube coordinates"
-      ]
+      [ InventoryEntry "id-hom" Nothing (Just "the identity morphism at a point") ]
   , levelHints      = []
   , levelGated      = False
   , levelConclusion =
@@ -468,10 +462,7 @@ hom2Level = Level
       \→ hom2 A x y y f (id-hom A y) f"
   , levelGoalUses  = []
   , levelInventory =
-      [ "f        : hom A x y"
-      , "id-hom   : (A : U) → (x : A) → hom A x x"
-      , "λ-intro  : introduce the cube coordinates"
-      ]
+      [ InventoryEntry "id-hom" Nothing (Just "the identity morphism at a point") ]
   , levelHints      =
       [ Hint "The right edge is the identity at $y$, so the whole triangle is just $f$, reparametrised. You only need one coordinate." Nothing
       , Hint "Look at the bottom edge of the goal: `↦ f t`. That tells you to apply $f$ to the first coordinate — type `\\ (t , s) → f t`." (Just "↦ f t")
@@ -508,10 +499,7 @@ homLeftUnitLevel = Level
       \→ hom2 A x x y (id-hom A x) f f"
   , levelGoalUses  = []
   , levelInventory =
-      [ "f        : hom A x y"
-      , "id-hom   : (A : U) → (x : A) → hom A x x"
-      , "λ-intro  : introduce the cube coordinates"
-      ]
+      [ InventoryEntry "id-hom" Nothing (Just "the identity morphism at a point") ]
   , levelHints      = []
   , levelGated      = False
   , levelConclusion =
@@ -543,11 +531,7 @@ mapPointLevel = Level
   , levelGoalType  =
       "(A : U) → (B : U) → (g : A → B) → (x : A) → hom B (g x) (g x)"
   , levelGoalUses  = []
-  , levelInventory =
-      [ "g        : A → B"
-      , "x        : A"
-      , "λ-intro  : introduce the interval coordinate"
-      ]
+  , levelInventory = []
   , levelHints      = []
   , levelGated      = False
   , levelConclusion =
@@ -581,11 +565,7 @@ apHomLevel = Level
       "(A : U) → (B : U) → (g : A → B) → (x : A) → (y : A) \
       \→ (f : hom A x y) → hom B (g x) (g y)"
   , levelGoalUses  = []
-  , levelInventory =
-      [ "g        : A → B"
-      , "f        : hom A x y"
-      , "λ-intro  : introduce the interval coordinate"
-      ]
+  , levelInventory = []
   , levelHints      = []
   , levelGated      = False
   , levelConclusion =
@@ -625,12 +605,7 @@ composeLevel = Level
       "(A : U) → (is-segal-A : is-segal A) → (x : A) → (y : A) → (z : A) \
       \→ (f : hom A x y) → (g : hom A y z) → hom A x z"
   , levelGoalUses  = []
-  , levelInventory =
-      [ "is-segal-A : is-segal A"
-      , "is-segal-A x y z f g : is-contr (Σ (h : hom A x z) , hom2 …)"
-      , "first      : the centre of a contractible type / first of a pair"
-      , "second     : the second component of a pair"
-      ]
+  , levelInventory = []
   , levelHints      = []
   , levelGated      = False
   , levelConclusion =
@@ -669,12 +644,7 @@ composeWitnessLevel = Level
       \→ (f : hom A x y) → (g : hom A y z) \
       \→ hom2 A x y z f g (first (first (is-segal-A x y z f g)))"
   , levelGoalUses  = []
-  , levelInventory =
-      [ "is-segal-A : is-segal A"
-      , "first (is-segal-A x y z f g) : (composite , witness) pair"
-      , "first      : the composite arrow (the pair's first component)"
-      , "second     : the witness triangle (the pair's second component)"
-      ]
+  , levelInventory = []
   , levelHints      = []
   , levelGated      = False
   , levelConclusion =
@@ -716,11 +686,7 @@ unfoldingSquareLevel = Level
   , levelGoalName  = "unfolding-square"
   , levelGoalType  = "(A : U) → (triangle : Δ² → A) → Δ¹×Δ¹ → A"
   , levelGoalUses  = []
-  , levelInventory =
-      [ "triangle : Δ² → A"
-      , "recOR    : split on a pair of covering topes (here t ≤ s / s ≤ t)"
-      , "(s , t)  : the swapped coordinate, reflecting across the diagonal"
-      ]
+  , levelInventory = []
   , levelHints      = []
   , levelGated      = False
   , levelConclusion =
@@ -767,9 +733,10 @@ witnessSquareLevel = Level
       \→ (f : hom A x y) → (g : hom A y z) → Δ¹×Δ¹ → A"
   , levelGoalUses  = []
   , levelInventory =
-      [ "unfolding-square    : (A : U) → (Δ² → A) → Δ¹×Δ¹ → A"
-      , "witness-comp-is-segal : the composition witness triangle"
-      , "is-segal-A x y z f g  : the centre of contraction for f, g"
+      [ InventoryEntry "unfolding-square" Nothing
+          (Just "reflect a triangle across the diagonal into a square")
+      , InventoryEntry "witness-comp-is-segal" Nothing
+          (Just "the composition witness triangle")
       ]
   , levelHints      = []
   , levelGated      = True
@@ -806,11 +773,7 @@ idArrLevel = Level
   , levelGoalName  = "id-arr-in-arr"
   , levelGoalType  = "(A : U) → (f : arr A) → hom (arr A) f f"
   , levelGoalUses  = []
-  , levelInventory =
-      [ "f        : arr A   (an arrow of A)"
-      , "f s      : A       the arrow f at its own coordinate s"
-      , "λ-intro  : two coordinates — t between arrows, s along the arrow"
-      ]
+  , levelInventory = []
   , levelHints      = []
   , levelGated      = False
   , levelConclusion =
@@ -857,10 +820,8 @@ arrInArrLevel = Level
       \→ (f : hom A x y) → (g : hom A y z) → hom (arr A) f g"
   , levelGoalUses  = []
   , levelInventory =
-      [ "witness-square-comp-is-segal : the composition square Δ¹×Δ¹ → A"
-      , "f , g    : the endpoints, now points of arr A"
-      , "λ-intro  : t slides from f to g; s runs along the arrow at (t , s)"
-      ]
+      [ InventoryEntry "witness-square-comp-is-segal" Nothing
+          (Just "the composition square Δ¹×Δ¹ → A") ]
   , levelHints      = []
   , levelGated      = False
   , levelConclusion =
@@ -930,11 +891,12 @@ witnessAssocLevel = Level
       \(arr-in-arr-is-segal A is-segal-A x y z g h))"
   , levelGoalUses  = []
   , levelInventory =
-      [ "witness-comp-is-segal : the witness, here applied in arr A"
-      , "is-segal-arr A is-segal-A : arr A is Segal (taken as given)"
-      , "arr-in-arr-is-segal … w x y f g : the (f,g) composition arrow"
-      , "arr-in-arr-is-segal … x y z g h : the (g,h) composition arrow"
-      , "arr A    : the arrow type Δ¹ → A, worked in here"
+      [ InventoryEntry "witness-comp-is-segal" Nothing
+          (Just "the witness, here applied in arr A")
+      , InventoryEntry "is-segal-arr" Nothing
+          (Just "arr A is Segal (taken as given)")
+      , InventoryEntry "arr-in-arr-is-segal" Nothing
+          (Just "the composition arrows being composed")
       ]
   , levelHints      = []
   , levelGated      = False
@@ -981,10 +943,8 @@ tetrahedronLevel = Level
       \→ (f : hom A w x) → (g : hom A x y) → (h : hom A y z) → Δ³ → A"
   , levelGoalUses  = []
   , levelInventory =
-      [ "witness-associative-is-segal : the prism Δ²×Δ¹ → A, as a curried witness"
-      , "((t , s) , r) : the Δ³ coordinates"
-      , "(t , r) s     : the middle-simplex regrouping"
-      ]
+      [ InventoryEntry "witness-associative-is-segal" Nothing
+          (Just "the prism Δ²×Δ¹ → A, as a curried witness") ]
   , levelHints      = []
   , levelGated      = False
   , levelConclusion =
@@ -1030,9 +990,8 @@ tripleCompLevel = Level
       \→ (f : hom A w x) → (g : hom A x y) → (h : hom A y z) → hom A w z"
   , levelGoalUses  = []
   , levelInventory =
-      [ "tetrahedron-associative-is-segal : the tetrahedron Δ³ → A"
-      , "((t , t) , t) : the fully degenerate point, the main diagonal"
-      ]
+      [ InventoryEntry "tetrahedron-associative-is-segal" Nothing
+          (Just "the tetrahedron Δ³ → A") ]
   , levelHints      = []
   , levelGated      = False
   , levelConclusion =

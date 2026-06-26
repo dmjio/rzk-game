@@ -1,9 +1,5 @@
 ---
 id: unfolding-square
-inventory:
-- 'triangle : Δ² → A'
-- 'recOR    : split on a pair of covering topes (here t ≤ s / s ≤ t)'
-- '(s , t)  : the swapped coordinate, reflecting across the diagonal'
 statement: Δ¹×Δ¹ → A
 title: Unfolding a triangle
 ---
