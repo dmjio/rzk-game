@@ -308,6 +308,19 @@ main = do
                    _             -> []
   check "a deep granted lemma surfaces as a candidate move (rzk#261)"
     (any ("witness-square-comp-is-segal" `T.isPrefixOf`) aiaMoves)
+  -- Filling that candidate's leading arguments leaves a hole standing for a whole
+  -- shape-restricted argument (a Δ¹×Δ¹ point). It is reported with its goal, not
+  -- rejected by the goal's extension-type boundary check (rzk#267); before, the
+  -- boundary was checked eagerly against the opaque hole and failed to unify.
+  check "a shape-typed argument hole is reported, not a boundary error (rzk#267)"
+    (case checkLevel aia (T.unlines
+            [ "#def arr-in-arr-is-segal"
+            , "  (A : U) (is-segal-A : is-segal A) (x y z : A)"
+            , "  (f : hom A x y) (g : hom A y z)"
+            , "  : hom (arr A) f g"
+            , "  := \\ t s → witness-square-comp-is-segal A is-segal-A x y z f g ?" ]) of
+       Holes _ -> True
+       _       -> False)
 
   -- 10d. Forbidden moves: a level's denylist drops the always-available
   --      eliminators (first/second/recOR/idJ) from the moves panel
