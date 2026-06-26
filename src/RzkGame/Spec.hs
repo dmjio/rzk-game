@@ -35,18 +35,19 @@ module RzkGame.Spec
   , splitLevelSource
   , levelProse
   , goalFromTemplate
+  , inventoryType
   ) where
 
 import           Control.Applicative ((<|>))
-import           Data.Aeson          (FromJSON (..), Value, withObject, (.!=),
-                                      (.:), (.:?))
+import           Data.Aeson          (FromJSON (..), Value (String), withObject,
+                                      (.!=), (.:), (.:?))
 import           Data.Aeson.Types    (Parser)
 import           Data.Char           (isSpace)
 import           Data.Map.Strict     (Map)
 import           Data.Text           (Text)
 import qualified Data.Text           as T
 
-import           RzkGame.Level       (Hint (..))
+import           RzkGame.Level       (Hint (..), InventoryEntry (..))
 
 -- | The single JSON bundle the wasm app fetches: the @game.yaml@ as JSON under
 -- @config@, and every referenced level file inlined under @files@, keyed by the
@@ -178,7 +179,7 @@ data Meta = Meta
   , metaTitle     :: Text
   , metaRole      :: Maybe Text
   , metaStatement :: Text
-  , metaInventory :: [Text]
+  , metaInventory :: [InventoryEntry]
   , metaHints     :: [Hint]
   , metaGated     :: Bool
   } deriving (Eq, Show)
@@ -186,15 +187,26 @@ data Meta = Meta
 emptyMeta :: Meta
 emptyMeta = Meta "" "" Nothing "" [] [] False
 
+
 instance FromJSON Meta where
   parseJSON = withObject "Meta" $ \o -> Meta
     <$> o .:? "id" .!= ""
     <*> o .:? "title" .!= ""
     <*> o .:? "role"
     <*> o .:? "statement" .!= ""
-    <*> o .:? "inventory" .!= []
+    <*> (o .:? "inventory" .!= [] >>= traverse parseInventoryEntry)
     <*> (o .:? "hints" .!= [] >>= traverse parseHint)
     <*> o .:? "gated" .!= False
+
+-- | Read one inventory entry. It is either a bare name string (the type is then
+-- looked up from the prelude) or @{ name, type?, synopsis? }@. 'InventoryEntry'
+-- lives in 'RzkGame.Level', so it is decoded here without an orphan instance.
+parseInventoryEntry :: Value -> Parser InventoryEntry
+parseInventoryEntry (String s) = pure (InventoryEntry s Nothing Nothing)
+parseInventoryEntry v = flip (withObject "InventoryEntry") v $ \o -> InventoryEntry
+  <$> o .:  "name"
+  <*> o .:? "type"
+  <*> o .:? "synopsis"
 
 -- | Read one front-matter hint: @{ text, when-goal? }@. The 'Hint' type lives in
 -- 'RzkGame.Level', so we decode it here without an orphan 'FromJSON' instance.
@@ -312,6 +324,48 @@ goalFromTemplate template = do
       let binders   = concatMap expandBinder (parenGroups bindersText)
           closed    = T.intercalate " → " (binders ++ [normalise resultType])
       Right (name, closed, uses)
+
+-- | The as-written type of a prelude definition, looked up by name. Scans the
+-- prelude for a @#def <name> …@ or @#postulate <name> …@ command and recovers its
+-- closed Π-type the same way 'goalFromTemplate' recovers the goal — the original
+-- declared type, not weak-head-normalised. 'Nothing' when no command defines that
+-- exact name (e.g. the name is a parameter, a projection, or an applied
+-- expression), so the inventory simply shows no type for that entry.
+inventoryType :: Text -> Text -> Maybe Text
+inventoryType prelude wanted =
+  case [ ty | cmd <- preludeCommands prelude, Just ty <- [commandType wanted cmd] ] of
+    (ty : _) -> Just ty
+    []       -> Nothing
+
+-- | Split a prelude into commands: a new command begins at each line that starts
+-- with @#@ (column 0); indented continuation lines join the current command.
+preludeCommands :: Text -> [Text]
+preludeCommands = go [] . T.lines
+  where
+    flush acc = [T.unlines (reverse acc) | not (null acc)]
+    go acc []       = flush acc
+    go acc (l : ls)
+      | "#" `T.isPrefixOf` l = flush acc ++ go [l] ls
+      | otherwise            = go (l : acc) ls
+
+-- | The closed type of a @#def@/@#postulate@ command, if it defines @wanted@.
+-- A @#def@'s body (after @:=@) is dropped; a @#postulate@ has none. The header is
+-- then closed exactly as 'goalFromTemplate' closes a template's goal.
+commandType :: Text -> Text -> Maybe Text
+commandType wanted cmd = case T.words cmd of
+  (kw : n : _)
+    | kw `elem` ["#def", "#postulate"], n == wanted ->
+        let afterKw   = T.stripStart (T.drop (T.length kw) (T.stripStart cmd))
+            afterName = T.drop (T.length n) afterKw
+            header    = fst (T.breakOn ":=" afterName)
+            (_, afterUses) = takeUses (T.stripStart header)
+        in case splitResultColon afterUses of
+             Right (bindersText, resultType) ->
+               Just (T.intercalate " → "
+                       (concatMap expandBinder (parenGroups bindersText)
+                          ++ [normalise resultType]))
+             Left _ -> Nothing
+  _ -> Nothing
 
 -- | Strip a leading @uses (a, b, …)@ clause (rzk's syntax puts it between the
 -- definition name and its parameters), returning its comma-separated names and
