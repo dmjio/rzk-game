@@ -64,8 +64,8 @@ main = do
         , levelTemplate = "#def goal uses (A) : U\n  := ?"
         , levelSolution = "#def goal uses (A) : U\n  := A"
         , levelGoalName = "goal", levelGoalType = "U", levelGoalUses = us
-        , levelInventory = [], levelHints = [], levelGated = False
-        , levelConclusion = "" }
+        , levelInventory = [], levelForbidden = [], levelHints = []
+        , levelGated = False, levelConclusion = "" }
   check "checkLevel solves when the goal-check declares the assumption"
     (checkLevel (usesLevel ["A"]) (levelSolution (usesLevel ["A"])) == Solved)
   check "checkLevel fails the same proof when the uses clause is dropped"
@@ -298,6 +298,57 @@ main = do
     ("id-hom" `elem` grants)
   check "a candidate move applies the granted lemma id-hom to holes"
     (any (\m -> "id-hom" `T.isPrefixOf` m && "?" `T.isInfixOf` m) moves)
+  -- A deep granted lemma surfaces too: "An arrow between arrows" grants
+  -- witness-square-comp-is-segal, which fills its hole as an eight-argument spine.
+  -- rzk now charges only branching eliminators against the elimination-depth
+  -- bound (rzk#261); before, a spine this deep was silently dropped.
+  let aia   = head [ l | l <- gameLevels, levelTitle l == "An arrow between arrows" ]
+      aiaMoves = case checkLevel aia (levelTemplate aia) of
+                   Holes (h : _) -> hvMoves h
+                   _             -> []
+  check "a deep granted lemma surfaces as a candidate move (rzk#261)"
+    (any ("witness-square-comp-is-segal" `T.isPrefixOf`) aiaMoves)
+  -- Filling that candidate's leading arguments leaves a hole standing for a whole
+  -- shape-restricted argument (a Δ¹×Δ¹ point). It is reported with its goal, not
+  -- rejected by the goal's extension-type boundary check (rzk#267); before, the
+  -- boundary was checked eagerly against the opaque hole and failed to unify.
+  check "a shape-typed argument hole is reported, not a boundary error (rzk#267)"
+    (case checkLevel aia (T.unlines
+            [ "#def arr-in-arr-is-segal"
+            , "  (A : U) (is-segal-A : is-segal A) (x y z : A)"
+            , "  (f : hom A x y) (g : hom A y z)"
+            , "  : hom (arr A) f g"
+            , "  := \\ t s → witness-square-comp-is-segal A is-segal-A x y z f g ?" ]) of
+       Holes _ -> True
+       _       -> False)
+
+  -- 10d. Forbidden moves: a level's denylist drops the always-available
+  --      eliminators (first/second/recOR/idJ) from the moves panel
+  --      (allowedActions) and, on a gated level, blocks a proof that types one
+  --      (forbiddenViolations / gatePassed). "The composition square" forbids
+  --      first/second/recOR and is built from the granted lemmas instead, so its
+  --      own reference solution stays clean.
+  putStrLn "== forbidden moves: the denylist filters moves and gates the proof =="
+  let wsForbidProof = T.unlines
+        [ "#def witness-square-comp-is-segal"
+        , "  (A : U) (is-segal-A : is-segal A) (x y z : A)"
+        , "  (f : hom A x y) (g : hom A y z)"
+        , "  : Δ¹×Δ¹ → A"
+        , "  := \\ (t , s) → first (is-segal-A x y z f g) t s" ]
+      hv = HoleView Nothing "goal" [] [] []
+             ["first (?)", "recOR ( ? )", "id-hom (?)", "second (?)"] ["\\ t → ?"]
+  check "the composition square forbids first/second/recOR"
+    (levelForbidden ws == ["first", "second", "recOR"])
+  check "a forbidden eliminator in the body is flagged"
+    (forbiddenViolations ws wsForbidProof == ["first"])
+  check "the gated solution uses no forbidden move"
+    (null (forbiddenViolations ws (levelSolution ws)))
+  check "a gated proof that types a forbidden move fails the gate"
+    (not (gatePassed ws wsForbidProof))
+  check "allowedActions drops forbidden gives, keeping intros and allowed gives"
+    (allowedActions ws hv == [(Intro, "\\ t → ?"), (Give, "id-hom (?)")])
+  check "a level that forbids nothing flags nothing"
+    (null (forbiddenViolations (head gameLevels) "#def x := first (foo)"))
 
   -- 11. Error ordering: a wrong-typed editable region renders an error whose
   --     first non-empty line is the headline mismatch, not the global context
@@ -319,24 +370,25 @@ main = do
         (not ("Definitions in context" `T.isPrefixOf` firstLine e))
     r -> check ("expected a TypeError, got " <> show r) False
 
-  -- 12. Crash safety: rzk can still panic on a partial term (a multi-variable
-  --     binder in a hole's context, rzk#263) by throwing a pure `error`.
-  --     checkLevel forces the result inside a handler and reports such a panic as
-  --     a recoverable CheckerCrashed instead of letting it escape, which would
-  --     freeze the wasm app.
-  putStrLn "== crash safety: an rzk panic becomes a recoverable CheckerCrashed =="
+  -- 12. Crash safety / rzk#263: a multi-variable binder in a hole's context used
+  --     to make the hole query throw a pure `error`, freezing the wasm app. The
+  --     fix desugars such binders, so the same definition now elaborates cleanly
+  --     to a hole. checkLevel still forces the result inside 'guardCrash' as
+  --     defence-in-depth, so any future partial-term panic stays a recoverable
+  --     CheckerCrashed instead of escaping.
+  putStrLn "== crash safety: a multivar binder elaborates to a hole, not a crash =="
   let crashLevel = Level
         { levelTitle = "crash", levelIntro = "", levelStatement = ""
         , levelPrelude = "#lang rzk-1\n#assume A : U"
         , levelTemplate = "#def foo (k : (x y : A) → A) : A\n  := ?"
         , levelSolution = "#def foo (k : (x y : A) → A) : A\n  := ?"
         , levelGoalName = "foo", levelGoalType = "(k : (x y : A) → A) → A"
-        , levelGoalUses = [], levelInventory = [], levelHints = []
-        , levelGated = False, levelConclusion = "" }
-  check "a multivar-binder panic is caught as CheckerCrashed"
+        , levelGoalUses = [], levelInventory = [], levelForbidden = []
+        , levelHints = [], levelGated = False, levelConclusion = "" }
+  check "a multi-variable binder in a hole context no longer crashes (rzk#263)"
     (case checkLevel crashLevel (levelTemplate crashLevel) of
-       CheckerCrashed _ -> True
-       _                -> False)
+       Holes _ -> True
+       _       -> False)
 
   n <- readIORef failed
   if n == 0
@@ -442,6 +494,7 @@ fileV (SPuzzle z) = object
       ( [ "id" .= puzzleId z, "title" .= levelTitle lvl
         , "statement" .= levelStatement lvl
         , "inventory" .= map entryV (levelInventory lvl) ]
+        <> [ "forbidden" .= levelForbidden lvl | not (null (levelForbidden lvl)) ]
         <> [ "hints" .= map hintV (levelHints lvl) | not (null (levelHints lvl)) ]
         <> [ "gated" .= True | levelGated lvl ] )
   , "body" .= levelBody lvl
