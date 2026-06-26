@@ -1557,14 +1557,17 @@ inventoryView lvl
 gateView :: Level -> CheckResult -> [T.Text] -> View Model Action
 gateView lvl res violations
   | null violations = text ""
-  | otherwise       = gateBox (levelGated lvl) (hardMsg <> names) soft
+  | otherwise       = gateBox gated prefix violations suffix
   where
-    names = T.intercalate ", " violations
-    soft  = "Heads up — the intended solution does not use " <> names
-              <> ". Your proof still counts, but there is a shorter route without it."
-    hardMsg = case res of
-      Solved -> "🔒 So close — but this level grants only the moves under \x201c\&Allowed here\x201d, and your proof uses "
-      _      -> "🔒 Not allowed here — this level grants only the moves under \x201c\&Allowed here\x201d, not "
+    gated = levelGated lvl
+    prefix
+      | not gated = "Heads up — the intended solution does not use "
+      | otherwise = case res of
+          Solved -> "🔒 So close — but this level grants only the moves under \x201c\&Allowed here\x201d, and your proof uses "
+          _      -> "🔒 Not allowed here — this level grants only the moves under \x201c\&Allowed here\x201d, not "
+    suffix
+      | not gated = ". Your proof still counts, but there is a shorter route without it."
+      | otherwise = ""
 
 -- | The forbidden-moves notice: the always-available eliminators
 -- ('first'\/'second'\/'recOR'\/…) the proof uses that this level denies (see
@@ -1574,21 +1577,35 @@ gateView lvl res violations
 forbiddenGateView :: Level -> [T.Text] -> View Model Action
 forbiddenGateView lvl violations
   | null violations = text ""
-  | otherwise       = gateBox (levelGated lvl) hard soft
+  | otherwise       = gateBox gated prefix violations suffix
   where
-    names = T.intercalate ", " violations
-    hard  = "🔒 Not allowed here — this level asks you to build the proof without "
-              <> names <> ", so it does not count while they are used."
-    soft  = "Heads up — this level asks you to avoid " <> names
-              <> ". Your proof still counts, but the intended route does without it."
+    gated = levelGated lvl
+    prefix
+      | gated     = "🔒 Not allowed here — this level asks you to build the proof without "
+      | otherwise = "Heads up — this level asks you to avoid "
+    suffix
+      | gated     = ", so it does not count while they are used."
+      | otherwise = ". Your proof still counts, but the intended route does without it."
 
 -- | A gate notice box: hard (red, blocking) on a gated level, soft (amber,
 -- advisory) otherwise. Shared by the inventory and forbidden-moves gates, each
--- supplying its own wording.
-gateBox :: Bool -> T.Text -> T.Text -> View Model Action
-gateBox gated hard soft =
+-- supplying its own @prefix@ / @suffix@ wording. The offending names sit between
+-- them, each rendered in monospace ('monoNames') so a lemma or builtin name reads
+-- as code, not prose.
+gateBox :: Bool -> T.Text -> [T.Text] -> T.Text -> View Model Action
+gateBox gated prefix names suffix =
   H.div_ [ P.class_ (ms (if gated then "gate gate-hard" else "gate gate-soft" :: T.Text)) ]
-    [ H.p_ [] [ text (ms (if gated then hard else soft)) ] ]
+    [ H.p_ [] (text (ms prefix) : monoNames names <> [ text (ms suffix) ]) ]
+
+-- | A comma-separated list of names, each in a monospace span, as inline nodes
+-- for a gate notice.
+monoNames :: [T.Text] -> [View Model Action]
+monoNames = go
+  where
+    go []       = []
+    go [n]      = [ nameSpan n ]
+    go (n : ns) = nameSpan n : text ", " : go ns
+    nameSpan n  = H.span_ [ P.class_ "mono" ] [ text (ms n) ]
 
 -- | The focused hole's rendered goal, if the proof currently has holes. This is
 -- what a hint's @when-goal@ trigger is matched against.
