@@ -1,10 +1,5 @@
 ---
 id: compose-witness
-inventory:
-- 'is-segal-A : is-segal A'
-- 'first (is-segal-A x y z f g) : (composite , witness) pair'
-- 'first      : the composite arrow (the pair''s first component)'
-- 'second     : the witness triangle (the pair''s second component)'
 statement: hom2 A x y z f g (first (first (is-segal-A x y z f g)))
 title: The composition witness
 ---

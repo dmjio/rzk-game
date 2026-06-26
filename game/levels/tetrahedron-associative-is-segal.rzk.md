@@ -1,9 +1,8 @@
 ---
 id: tetrahedron-associative-is-segal
 inventory:
-- 'witness-associative-is-segal : the prism Δ²×Δ¹ → A, as a curried witness'
-- '((t , s) , r) : the Δ³ coordinates'
-- '(t , r) s     : the middle-simplex regrouping'
+- name: witness-associative-is-segal
+  synopsis: the prism Δ²×Δ¹ → A, as a curried witness
 statement: Δ³ → A
 title: The associativity tetrahedron
 ---

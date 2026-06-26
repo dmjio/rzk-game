@@ -5,9 +5,8 @@ hints:
   when-goal: '↦ f t'
 id: rut
 inventory:
-- 'f        : hom A x y'
-- 'id-hom   : (A : U) → (x : A) → hom A x x'
-- 'λ-intro  : introduce the cube coordinates'
+- name: id-hom
+  synopsis: the identity morphism at a point
 statement: hom2 A x y y f (id-hom A y) f
 title: The right-unit triangle
 ---

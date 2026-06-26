@@ -12,6 +12,7 @@
 -- The player wins when the editable region typechecks with no remaining holes.
 module RzkGame.Level
   ( Level (..)
+  , InventoryEntry (..)
   , Hint (..)
   , CheckResult (..)
   , HoleView (..)
@@ -50,6 +51,20 @@ import           Rzk.TypeCheck        (HoleEntry (..), HoleInfo (..),
                                        ppTypeErrorInScopedContext',
                                        typecheckModulesWithHolesAndLemmas)
 
+-- | A granted lemma in a level's inventory: a prelude-defined name the level
+-- allows the player to use (the "Allowed here" list). The type is shown for
+-- reference; by default it is the lemma's as-written type, looked up from the
+-- prelude, so an entry is usually just a name plus an optional one-line synopsis.
+-- An explicit 'invType' overrides the looked-up type when a different
+-- presentation is wanted (an alpha-rename, or unfolding a definition like
+-- @is-segal@). Local hypotheses and the always-available introduction/elimination
+-- moves are /not/ inventory items — only granted lemmas are.
+data InventoryEntry = InventoryEntry
+  { invName     :: Text        -- ^ the granted lemma's name (a prelude definition)
+  , invType     :: Maybe Text  -- ^ type override; 'Nothing' ⇒ look it up in the prelude
+  , invSynopsis :: Maybe Text  -- ^ optional one-line prose note
+  } deriving (Eq, Show)
+
 -- | A single level. The text fields are Rzk source or human-readable prose.
 data Level = Level
   { levelTitle      :: Text   -- ^ short title
@@ -61,7 +76,7 @@ data Level = Level
   , levelGoalName   :: Text   -- ^ the definition the player must produce
   , levelGoalType   :: Text   -- ^ its required (closed) type, enforced on check
   , levelGoalUses   :: [Text] -- ^ assumptions the goal-check declares via @uses (…)@
-  , levelInventory  :: [Text] -- ^ names available to the player
+  , levelInventory  :: [InventoryEntry] -- ^ granted lemmas (the "Allowed here" list)
   , levelHints      :: [Hint] -- ^ authored hints, revealed on request
   , levelGated      :: Bool   -- ^ make an inventory violation fail the check
   , levelConclusion :: Text   -- ^ prose shown on success
@@ -219,14 +234,12 @@ inventoryViolations lvl editable
     defined = preludeDefinedNames (levelPrelude lvl)
     allowed = levelInventoryNames lvl ++ referencedNames (levelSolution lvl)
 
--- | The lemma names a level grants — the leading token of each inventory entry.
--- An entry is written @name : type | synopsis@, so the name is its first word.
--- These names form the per-level allow-list of hole candidates passed to rzk
--- (see 'checkLevel'), and the granted-names part of the inventory gating
--- allow-list (which 'inventoryViolations' extends with the solution's own uses).
+-- | The lemma names a level grants — the 'invName' of each inventory entry.
+-- These form the per-level allow-list of hole candidates passed to rzk (see
+-- 'checkLevel'), and the granted-names part of the inventory gating allow-list
+-- (which 'inventoryViolations' extends with the solution's own uses).
 levelInventoryNames :: Level -> [Text]
-levelInventoryNames = mapMaybe firstToken . levelInventory
-  where firstToken e = case T.words e of (n : _) -> Just n; [] -> Nothing
+levelInventoryNames = map invName . levelInventory
 
 -- | The names a prelude /defines/: the first word after each @#def@ or
 -- @#postulate@ command. Continuation lines (indented, no command) are skipped.

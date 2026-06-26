@@ -1,8 +1,8 @@
 ---
 id: triple-comp-is-segal
 inventory:
-- 'tetrahedron-associative-is-segal : the tetrahedron Δ³ → A'
-- '((t , t) , t) : the fully degenerate point, the main diagonal'
+- name: tetrahedron-associative-is-segal
+  synopsis: the tetrahedron Δ³ → A
 statement: hom A w z
 title: The triple composite
 ---

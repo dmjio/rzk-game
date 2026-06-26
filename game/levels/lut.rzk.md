@@ -1,9 +1,8 @@
 ---
 id: lut
 inventory:
-- 'f        : hom A x y'
-- 'id-hom   : (A : U) → (x : A) → hom A x x'
-- 'λ-intro  : introduce the cube coordinates'
+- name: id-hom
+  synopsis: the identity morphism at a point
 statement: hom2 A x x y (id-hom A x) f f
 title: The left-unit triangle
 ---

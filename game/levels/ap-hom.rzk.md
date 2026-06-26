@@ -1,9 +1,5 @@
 ---
 id: ap-hom
-inventory:
-- 'g        : A → B'
-- 'f        : hom A x y'
-- 'λ-intro  : introduce the interval coordinate'
 statement: hom B (g x) (g y)
 title: A function on a morphism
 ---

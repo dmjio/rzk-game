@@ -2,9 +2,10 @@
 gated: true
 id: witness-square-comp-is-segal
 inventory:
-- 'unfolding-square    : (A : U) → (Δ² → A) → Δ¹×Δ¹ → A'
-- 'witness-comp-is-segal : the composition witness triangle'
-- 'is-segal-A x y z f g  : the centre of contraction for f, g'
+- name: unfolding-square
+  synopsis: reflect a triangle across the diagonal into a square
+- name: witness-comp-is-segal
+  synopsis: the composition witness triangle
 statement: Δ¹×Δ¹ → A
 title: The composition square
 ---
