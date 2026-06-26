@@ -298,6 +298,16 @@ main = do
     ("id-hom" `elem` grants)
   check "a candidate move applies the granted lemma id-hom to holes"
     (any (\m -> "id-hom" `T.isPrefixOf` m && "?" `T.isInfixOf` m) moves)
+  -- A deep granted lemma surfaces too: "An arrow between arrows" grants
+  -- witness-square-comp-is-segal, which fills its hole as an eight-argument spine.
+  -- rzk now charges only branching eliminators against the elimination-depth
+  -- bound (rzk#261); before, a spine this deep was silently dropped.
+  let aia   = head [ l | l <- gameLevels, levelTitle l == "An arrow between arrows" ]
+      aiaMoves = case checkLevel aia (levelTemplate aia) of
+                   Holes (h : _) -> hvMoves h
+                   _             -> []
+  check "a deep granted lemma surfaces as a candidate move (rzk#261)"
+    (any ("witness-square-comp-is-segal" `T.isPrefixOf`) aiaMoves)
 
   -- 10d. Forbidden moves: a level's denylist drops the always-available
   --      eliminators (first/second/recOR/idJ) from the moves panel
@@ -347,12 +357,13 @@ main = do
         (not ("Definitions in context" `T.isPrefixOf` firstLine e))
     r -> check ("expected a TypeError, got " <> show r) False
 
-  -- 12. Crash safety: rzk can still panic on a partial term (a multi-variable
-  --     binder in a hole's context, rzk#263) by throwing a pure `error`.
-  --     checkLevel forces the result inside a handler and reports such a panic as
-  --     a recoverable CheckerCrashed instead of letting it escape, which would
-  --     freeze the wasm app.
-  putStrLn "== crash safety: an rzk panic becomes a recoverable CheckerCrashed =="
+  -- 12. Crash safety / rzk#263: a multi-variable binder in a hole's context used
+  --     to make the hole query throw a pure `error`, freezing the wasm app. The
+  --     fix desugars such binders, so the same definition now elaborates cleanly
+  --     to a hole. checkLevel still forces the result inside 'guardCrash' as
+  --     defence-in-depth, so any future partial-term panic stays a recoverable
+  --     CheckerCrashed instead of escaping.
+  putStrLn "== crash safety: a multivar binder elaborates to a hole, not a crash =="
   let crashLevel = Level
         { levelTitle = "crash", levelIntro = "", levelStatement = ""
         , levelPrelude = "#lang rzk-1\n#assume A : U"
@@ -361,10 +372,10 @@ main = do
         , levelGoalName = "foo", levelGoalType = "(k : (x y : A) → A) → A"
         , levelGoalUses = [], levelInventory = [], levelForbidden = []
         , levelHints = [], levelGated = False, levelConclusion = "" }
-  check "a multivar-binder panic is caught as CheckerCrashed"
+  check "a multi-variable binder in a hole context no longer crashes (rzk#263)"
     (case checkLevel crashLevel (levelTemplate crashLevel) of
-       CheckerCrashed _ -> True
-       _                -> False)
+       Holes _ -> True
+       _       -> False)
 
   n <- readIORef failed
   if n == 0
