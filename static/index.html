@@ -254,6 +254,14 @@
     .mapbar-count { white-space: nowrap; }
     .mapbar-progress.done { color: #2a7a2a; font-weight: 600; }
     .mapbar-progress.done .mapbar-bar-fill { background: #2a7a2a; }
+    /* Starred-extras suffix: muted hollow star until every bonus is done, then
+       gold. Sits beside the required count, never folding into it. */
+    .extra-count { font-variant-numeric: tabular-nums; font-weight: normal;
+                   color: #b0a06a; white-space: nowrap; }
+    .extra-count.done { color: #c79a00; font-weight: 600; }
+    .breadcrumb .extra-count { margin-left: .4rem; }
+    /* Groups a required count with its extras suffix on the right of a row. */
+    .count-group { display: flex; align-items: baseline; gap: .4rem; }
     /* The persistent "How holes work" help link, at the right of the bar. */
     .map-help { background: none; border: 1px solid #ddd; border-radius: 6px;
                 cursor: pointer; font-size: .8rem; padding: .25rem .6rem;

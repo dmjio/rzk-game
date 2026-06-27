@@ -1049,12 +1049,12 @@ navHeader env m =
             [ text (if open then "✕  Close map" else "☰  Levels") ]
         , H.span_ [ P.class_ "mapbar-loc" ] [ text (ms loc) ]
         , H.div_ [ P.class_ (ms (progCls :: T.Text)), P.title_ "Overall progress" ]
-            [ H.div_ [ P.class_ "mapbar-bar" ]
-                [ H.div_ [ P.class_ "mapbar-bar-fill"
-                         , styleInline_ (ms ("width:" <> tshow pct <> "%")) ] [] ]
-            , H.span_ [ P.class_ "mapbar-count" ]
-                [ text (ms (tshow done <> " / " <> tshow total <> " done")) ]
-            ]
+            ( [ H.div_ [ P.class_ "mapbar-bar" ]
+                  [ H.div_ [ P.class_ "mapbar-bar-fill"
+                           , styleInline_ (ms ("width:" <> tshow pct <> "%")) ] [] ]
+              , H.span_ [ P.class_ "mapbar-count" ]
+                  [ text (ms (tshow done <> " / " <> tshow total <> " done")) ]
+              ] ++ extrasBadge (overallExtras env m) )
         , helpLink env
         ]
     , if open then levelMap env m else text ""
@@ -1114,21 +1114,27 @@ levelMap env m =
       maybe []
             (\c -> [ H.div_ [ P.class_ "chapter-head" ]
                        [ H.span_ [ P.class_ "chapter-title" ] [ text (ms c) ]
-                       , H.span_ [ P.class_ (ms (countCls "chapter-count" cd ct)) ]
-                           [ text (ms (tshow cd <> " / " <> tshow ct)) ]
+                       , H.span_ [ P.class_ "count-group" ]
+                           ( H.span_ [ P.class_ (ms (countCls "chapter-count" cd ct)) ]
+                               [ text (ms (tshow cd <> " / " <> tshow ct)) ]
+                             : extrasBadge cx )
                        ] ])
             (chapterTitle ch)
         ++ map sectionBlock (chapterSections ch)
       where (cd, ct) = chapterProgress (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) ch
+            cx       = chapterExtras   (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) ch
     sectionBlock sec =
       let sid       = sectionId sec
           mine      = [ (i, s) | (i, s) <- indexed, slotSectionId s == sid ]
           (d, t)    = sectionProgress (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) sid
+          sx        = sectionExtras   (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) sid
       in H.div_ [ P.class_ "section-block" ]
            [ H.div_ [ P.class_ "section-head" ]
                [ H.span_ [ P.class_ "section-title" ] [ text (ms (sectionTitle sec)) ]
-               , H.span_ [ P.class_ (ms (countCls "section-count" d t)) ]
-                   [ text (ms (tshow d <> " / " <> tshow t)) ]
+               , H.span_ [ P.class_ "count-group" ]
+                   ( H.span_ [ P.class_ (ms (countCls "section-count" d t)) ]
+                       [ text (ms (tshow d <> " / " <> tshow t)) ]
+                     : extrasBadge sx )
                ]
            , H.div_ [ P.class_ "levels" ] (map (slotButton env m) mine)
            ]
@@ -1238,12 +1244,31 @@ overallProgress env m =
   in ( length (filter (slotDone (m ^. solved) (m ^. viewed) (m ^. pretest)) req)
      , length req )
 
+-- | @(done, total)@ over every extra (starred) slot of the game.
+overallExtras :: GameEnv -> Model -> (Int, Int)
+overallExtras env m =
+  let ex = filter slotExtra (envSlots env)
+  in ( length (filter (slotDone (m ^. solved) (m ^. viewed) (m ^. pretest)) ex)
+     , length ex )
+
+-- | The starred-extras suffix for a progress readout: nothing when the scope has
+-- no extras, a hollow star while some remain, and a gold filled star once every
+-- bonus puzzle is done. It sits beside the required count, which keeps defining
+-- completion, so finishing optional work is acknowledged without inflating the
+-- "must do" denominator.
+extrasBadge :: (Int, Int) -> [View Model Action]
+extrasBadge (_, 0)   = []
+extrasBadge (xd, xt) =
+  [ H.span_ [ P.class_ (ms ("extra-count" <> if xd == xt then " done" else "" :: T.Text)) ]
+      [ text (ms ((if xd == xt then "★ " else "☆ ") <> tshow xd <> "/" <> tshow xt)) ] ]
+
 -- | A section breadcrumb shown atop each slot page: the section title and its
 -- "k / n in this section" count (current-section progress).
 breadcrumb :: GameEnv -> Model -> T.Text -> View Model Action
 breadcrumb env m sid =
   H.p_ [ P.class_ "breadcrumb" ]
-    [ text (ms (title <> " — " <> tshow d <> " / " <> tshow t <> " in this section")) ]
+    ( text (ms (title <> " — " <> tshow d <> " / " <> tshow t <> " in this section"))
+      : extrasBadge (sectionExtras (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) sid) )
   where
     title  = maybe "" sectionTitle (find ((== sid) . sectionId) (envSections env))
     (d, t) = sectionProgress (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) sid
