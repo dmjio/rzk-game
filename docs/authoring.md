@@ -52,31 +52,41 @@ against.
 ## The Table of Contents
 
 The table of contents is `game.yaml`. It holds a title and an ordered list of
-sections. A section has an `id`, a `title`, and ordered `items`. Each item
-references a file by path, tagged `prose:` or `puzzle:`.
+`chapters`. A chapter has an optional `title` and an ordered list of `sections`.
+An untitled chapter renders its sections at the top level, so a flat game is just
+one untitled chapter. A section has an `id`, a `title`, and ordered `items`. Each
+item references a file by path, tagged `prose:` or `puzzle:`.
 
 ```yaml
 title: My game
-sections:
-- id: morphisms
-  title: Morphisms and triangles
-  items:
-  - prose:
-      file: levels/morphisms-intro.md
-  - puzzle:
-      file: levels/my-id.rzk.md
-  - puzzle:
-      file: levels/map-point.rzk.md
-      role: pretest
-      remedies:
-      - label: 'Review: the basics'
-        section: morphisms
-  - puzzle:
-      file: levels/ap-hom.rzk.md
-      prereqs:
-      - map-point
-  - prose:
-      file: levels/morphisms-summary.md
+chapters:
+- sections:
+  - id: getting-started
+    title: Getting started
+    items:
+    - prose:
+        file: levels/how-holes-work.md
+- title: Directed type theory
+  sections:
+  - id: morphisms
+    title: Morphisms and triangles
+    items:
+    - prose:
+        file: levels/morphisms-intro.md
+    - puzzle:
+        file: levels/my-id.rzk.md
+    - puzzle:
+        file: levels/map-point.rzk.md
+        role: pretest
+        remedies:
+        - label: 'Review: the basics'
+          section: morphisms
+    - puzzle:
+        file: levels/ap-hom.rzk.md
+        prereqs:
+        - map-point
+    - prose:
+        file: levels/morphisms-summary.md
 ```
 
 A `puzzle:` reference carries the placement metadata. This is the part about a
@@ -105,8 +115,8 @@ id: rut
 title: The right-unit triangle
 statement: hom2 A x y y f (id-hom A y) f
 inventory:
-- 'f        : hom A x y'
-- 'id-hom   : (A : U) → (x : A) → hom A x x'
+- name: id-hom
+  synopsis: the identity morphism at a point
 hints:
 - text: 'The right edge is the identity at $y$, so the whole triangle is just $f$ reparametrised.'
 - text: 'Look at the bottom edge of the goal: `↦ f t`. Apply $f$ to the first coordinate.'
@@ -146,12 +156,14 @@ The front-matter holds the intrinsic metadata.
 - `id` is the stable id, referenced by `prereqs` and by the file path.
 - `title` is the heading shown on the page.
 - `statement` is the goal in human-readable form, shown in the Goal panel.
-- `inventory` lists the lemmas and moves the level grants, one per line as
-  `name : description`. The leading token is the granted name. See *Inventory and
-  gating* below.
+- `inventory` lists the prelude lemmas the level grants. Each entry is a `name`,
+  with an optional one-line `synopsis` and an optional `type` (the type is
+  otherwise read from the prelude). See *Inventory and gating* below.
+- `forbidden` lists built-in eliminators the level bans, such as `idJ`, `first`,
+  `second`, or `recOR`. See *Inventory and gating* below.
 - `hints` is an ordered list. See *Hints* below.
-- `gated`, when `true`, makes an inventory violation fail the check. It defaults
-  to `false`.
+- `gated`, when `true`, makes an inventory or forbidden-move violation fail the
+  check. It defaults to `false`.
 
 The body has three roles of fenced rzk block, with surrounding prose.
 
@@ -170,7 +182,9 @@ Note that the engine recovers the goal the player must produce, both its name an
 its closed type, from the template's `#def`. So an author does not state them
 twice. The win condition is that a definition of that name with that type is in
 scope and hole-free. Intuitively, this means an empty editable region cannot
-pass.
+pass. When the goal `#def` declares a `uses (…)` clause, the win-check carries
+it, so a level can require the proof to genuinely use a named assumption such as
+`funext`.
 
 ## A Prose Page
 
@@ -191,6 +205,10 @@ Its `role` is a BOPPPS tag, used only to label the page. The tags are
 `bridge-in`, `outcomes`, `participatory`, `post-test`, `summary`, and `note`. The
 tag is advisory. A page needs none, and may sit anywhere in a section. Prose and
 TeX render as they do in a puzzle's intro.
+
+One prose page is special. Give a page the `id` `how-holes-work`, and the engine
+shows a persistent "❓ Holes" link in the header that jumps to it from any page.
+A game without such a page simply has no link.
 
 ## Hints
 
@@ -213,9 +231,12 @@ is relevant.
 
 ## Inventory and Gating
 
-The `inventory` lists what a level grants. It doubles as the "Allowed here"
-reference shown beside the moves. The leading token of each entry is the granted
-name.
+The `inventory` lists the prelude lemmas a level grants. It doubles as the
+"Allowed here" reference shown beside the moves. Each entry is a `name`, with an
+optional one-line `synopsis` and an optional `type`. The type is read from the
+prelude by name, so an entry is usually just a name and a synopsis; give an
+explicit `type` only to override what the prelude shows. A bare string entry is
+read as the name alone.
 
 By default the inventory is informative only. After a check, the engine scans the
 identifiers the proof body uses, keeps those the prelude defines, and reports any
@@ -224,12 +245,18 @@ blocker. Set `gated: true` to make a violation hard. Then a proof that uses an
 ungranted prelude lemma does not count as solved, even when it type-checks, and
 the success is withheld until only granted moves are used.
 
+The `forbidden` list bans rzk's built-in eliminators, which the inventory cannot
+reach because they are not prelude definitions. List any of `idJ`, `first`,
+`second`, or `recOR` to ban it: a forbidden move is dropped from the Moves panel,
+and one written into a proof body is flagged like an ungranted lemma — a soft
+notice by default, or a hard failure under `gated: true`.
+
 Only proof bodies are scanned, the text after each `:=`, never the type
 signatures. So the type formers a goal mentions are never flagged. Only
 prelude-defined names are kept, so local hypotheses and keywords are ignored. A
 level with an empty inventory gates nothing. Importantly, before turning `gated`
-on, check that the reference solution uses only granted names, since a gated
-level whose solution trips its own gate cannot be solved.
+on, check that the reference solution uses only granted names and no forbidden
+move, since a gated level whose solution trips its own gate cannot be solved.
 
 ## How to Make a Good Puzzle
 
@@ -244,9 +271,9 @@ A few guidelines have proven useful. They are recommendations, not rules.
 - Keep the editable region small. Put the given machinery in the prelude, and
   leave only the step the puzzle is about in the template. A one-line hole is
   often enough.
-- Grant only what the puzzle needs. List the relevant lemmas in `inventory`.
-  Where the puzzle should force a construction by hand rather than a shortcut, set
-  `gated: true`.
+- Grant only what the puzzle needs. List the relevant lemmas in `inventory`,
+  and `forbidden` for any built-in shortcut to rule out. Where the puzzle should
+  force a construction by hand, set `gated: true`.
 - Write the framing. The `statement` is the human-readable goal, the intro
   motivates it, and the conclusion states the takeaway.
 - Order the hints from general to specific, and add a contextual `when-goal` hint
