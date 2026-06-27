@@ -1267,11 +1267,15 @@ extrasBadge (xd, xt) =
 breadcrumb :: GameEnv -> Model -> T.Text -> View Model Action
 breadcrumb env m sid =
   H.p_ [ P.class_ "breadcrumb" ]
-    ( text (ms (title <> " — " <> tshow d <> " / " <> tshow t <> " in this section"))
-      : extrasBadge (sectionExtras (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) sid) )
+    ( [ text (ms (title <> " — "))
+      , H.span_ [ P.class_ (ms (bcCls :: T.Text)) ]
+          [ text (ms (tshow d <> " / " <> tshow t)) ]
+      , text " in this section"
+      ] ++ extrasBadge (sectionExtras (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) sid) )
   where
     title  = maybe "" sectionTitle (find ((== sid) . sectionId) (envSections env))
     (d, t) = sectionProgress (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) sid
+    bcCls  = "breadcrumb-count" <> if d == t && t > 0 then " done" else ""
 
 -- | A prose pseudo-level page: the rendered text, a viewed mark, and a section
 -- "complete" badge when reaching it finishes the section.
