@@ -1107,11 +1107,19 @@ levelMap env m =
     (concatMap chapterBlock (envChapters env) ++ [ progressControls m ])
   where
     indexed = zip [0 ..] (envSlots env)
-    -- A chapter: its heading (when titled) followed by its section blocks.
+    -- A chapter: its heading (when titled), with the chapter's aggregate
+    -- progress, followed by its section blocks. An untitled chapter renders no
+    -- heading, so its sections show only their own counts.
     chapterBlock ch =
-      maybe [] (\c -> [ H.h2_ [ P.class_ "chapter-head" ] [ text (ms c) ] ])
+      maybe []
+            (\c -> [ H.div_ [ P.class_ "chapter-head" ]
+                       [ H.span_ [ P.class_ "chapter-title" ] [ text (ms c) ]
+                       , H.span_ [ P.class_ (ms (countCls "chapter-count" cd ct)) ]
+                           [ text (ms (tshow cd <> " / " <> tshow ct)) ]
+                       ] ])
             (chapterTitle ch)
         ++ map sectionBlock (chapterSections ch)
+      where (cd, ct) = chapterProgress (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) ch
     sectionBlock sec =
       let sid       = sectionId sec
           mine      = [ (i, s) | (i, s) <- indexed, slotSectionId s == sid ]
@@ -1119,13 +1127,13 @@ levelMap env m =
       in H.div_ [ P.class_ "section-block" ]
            [ H.div_ [ P.class_ "section-head" ]
                [ H.span_ [ P.class_ "section-title" ] [ text (ms (sectionTitle sec)) ]
-               , H.span_ [ P.class_ (ms (countCls d t)) ]
+               , H.span_ [ P.class_ (ms (countCls "section-count" d t)) ]
                    [ text (ms (tshow d <> " / " <> tshow t)) ]
                ]
            , H.div_ [ P.class_ "levels" ] (map (slotButton env m) mine)
            ]
-    countCls :: Int -> Int -> T.Text
-    countCls d t = "section-count" <> if d == t && t > 0 then " done" else ""
+    countCls :: T.Text -> Int -> Int -> T.Text
+    countCls base d t = base <> if d == t && t > 0 then " done" else ""
 
 -- | Export / import / reset controls, at the foot of the level map. Export and
 -- import move the whole progress archive between devices or back it up; reset

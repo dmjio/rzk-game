@@ -43,6 +43,7 @@ module RzkGame.Section
   , sectionSlots
   , sectionProgress
   , sectionComplete
+  , chapterProgress
   ) where
 
 import           Data.List        (find)
@@ -230,3 +231,12 @@ sectionComplete
 sectionComplete slots solvedIxs viewed answers sid =
   let (d, t) = sectionProgress slots solvedIxs viewed answers sid
   in t > 0 && d == t
+
+-- | @(done, total)@ over every required slot in all of a chapter's sections.
+chapterProgress
+  :: [Slot] -> Set Int -> Set Text -> Map Text PretestAnswer -> Chapter -> (Int, Int)
+chapterProgress slots solvedIxs viewed answers ch =
+  foldr add (0, 0)
+    [ sectionProgress slots solvedIxs viewed answers (sectionId s)
+    | s <- chapterSections ch ]
+  where add (a, b) (c, d) = (a + c, b + d)
