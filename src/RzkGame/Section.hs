@@ -39,10 +39,14 @@ module RzkGame.Section
   , levelLocked
     -- * Progress
   , slotRequired
+  , slotExtra
   , slotDone
   , sectionSlots
   , sectionProgress
+  , sectionExtras
   , sectionComplete
+  , chapterProgress
+  , chapterExtras
   ) where
 
 import           Data.List        (find)
@@ -199,6 +203,12 @@ slotRequired :: Slot -> Bool
 slotRequired (SlotProse  _ _)   = True
 slotRequired (SlotPuzzle _ _ z) = puzzleRole z /= Extra
 
+-- | Whether a slot is a starred extra: optional enrichment that does not gate
+-- completion but is tracked separately so finishing one can be acknowledged.
+slotExtra :: Slot -> Bool
+slotExtra (SlotPuzzle _ _ z) = puzzleRole z == Extra
+slotExtra _                  = False
+
 -- | Whether a slot's activity is done. Prose is done when viewed. A core puzzle
 -- is done when solved; a pre-test is done when solved /or/ marked familiar (a
 -- "not familiar" answer sends the player to remediation, so it is not yet done);
@@ -216,13 +226,31 @@ slotDone solvedIxs viewed answers = \case
 sectionSlots :: [Slot] -> Text -> [Slot]
 sectionSlots slots sid = filter ((== sid) . slotSectionId) slots
 
+-- | @(done, total)@ over the slots that satisfy a predicate (e.g. 'slotRequired'
+-- or 'slotExtra'), counting a slot as done via 'slotDone'.
+tally
+  :: (Slot -> Bool)
+  -> Set Int -> Set Text -> Map Text PretestAnswer -> [Slot] -> (Int, Int)
+tally keep solvedIxs viewed answers slots =
+  let kept = filter keep slots
+  in ( length (filter (slotDone solvedIxs viewed answers) kept)
+     , length kept )
+
+-- | Add two @(done, total)@ pairs componentwise.
+addPair :: (Int, Int) -> (Int, Int) -> (Int, Int)
+addPair (a, b) (c, d) = (a + c, b + d)
+
 -- | @(done, total)@ over a section's /required/ slots.
 sectionProgress
   :: [Slot] -> Set Int -> Set Text -> Map Text PretestAnswer -> Text -> (Int, Int)
 sectionProgress slots solvedIxs viewed answers sid =
-  let req = filter slotRequired (sectionSlots slots sid)
-  in ( length (filter (slotDone solvedIxs viewed answers) req)
-     , length req )
+  tally slotRequired solvedIxs viewed answers (sectionSlots slots sid)
+
+-- | @(done, total)@ over a section's /extra/ (starred) slots.
+sectionExtras
+  :: [Slot] -> Set Int -> Set Text -> Map Text PretestAnswer -> Text -> (Int, Int)
+sectionExtras slots solvedIxs viewed answers sid =
+  tally slotExtra solvedIxs viewed answers (sectionSlots slots sid)
 
 -- | Whether every required slot of a non-empty section is done.
 sectionComplete
@@ -230,3 +258,19 @@ sectionComplete
 sectionComplete slots solvedIxs viewed answers sid =
   let (d, t) = sectionProgress slots solvedIxs viewed answers sid
   in t > 0 && d == t
+
+-- | @(done, total)@ over every required slot in all of a chapter's sections.
+chapterProgress
+  :: [Slot] -> Set Int -> Set Text -> Map Text PretestAnswer -> Chapter -> (Int, Int)
+chapterProgress slots solvedIxs viewed answers ch =
+  foldr addPair (0, 0)
+    [ sectionProgress slots solvedIxs viewed answers (sectionId s)
+    | s <- chapterSections ch ]
+
+-- | @(done, total)@ over every extra (starred) slot in a chapter's sections.
+chapterExtras
+  :: [Slot] -> Set Int -> Set Text -> Map Text PretestAnswer -> Chapter -> (Int, Int)
+chapterExtras slots solvedIxs viewed answers ch =
+  foldr addPair (0, 0)
+    [ sectionExtras slots solvedIxs viewed answers (sectionId s)
+    | s <- chapterSections ch ]

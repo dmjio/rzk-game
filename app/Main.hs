@@ -16,6 +16,7 @@
 module Main (main) where
 
 import           Miso
+import           Miso.CSS           (styleInline_)
 import qualified Miso.Html          as H
 import qualified Miso.Html.Property as P
 import qualified Miso.Svg           as S
@@ -1046,17 +1047,26 @@ navHeader env m =
     [ H.div_ [ P.class_ "mapbar" ]
         [ H.button_ [ P.class_ "map-toggle", H.onClick ToggleMap ]
             [ text (if open then "✕  Close map" else "☰  Levels") ]
-        , H.span_ [ P.class_ "mapbar-loc" ]
-            [ text (ms (sectionTitleOf env (slotSectionId (currentSlot env m)))) ]
-        , H.span_ [ P.class_ (ms (progCls :: T.Text)) ]
-            [ text (ms (tshow done <> " / " <> tshow total)) ]
+        , H.span_ [ P.class_ "mapbar-loc" ] [ text (ms loc) ]
+        , H.div_ [ P.class_ (ms (progCls :: T.Text)), P.title_ "Overall progress" ]
+            ( [ H.div_ [ P.class_ "mapbar-bar" ]
+                  [ H.div_ [ P.class_ "mapbar-bar-fill"
+                           , styleInline_ (ms ("width:" <> tshow pct <> "%")) ] [] ]
+              , H.span_ [ P.class_ "mapbar-count" ]
+                  [ text (ms (tshow done <> " / " <> tshow total <> " done")) ]
+              ] ++ extrasBadge (overallExtras env m) )
         , helpLink env
         ]
     , if open then levelMap env m else text ""
     ]
   where
     open          = m ^. mapOpen
+    sid           = slotSectionId (currentSlot env m)
+    loc           = case chapterTitleOf env sid of
+                      Just ch | not (T.null ch) -> ch <> " › " <> sectionTitleOf env sid
+                      _                          -> sectionTitleOf env sid
     (done, total) = overallProgress env m
+    pct           = if total > 0 then (done * 100) `div` total else 0 :: Int
     progCls       = "mapbar-progress" <> if done == total && total > 0 then " done" else ""
 
 -- | The persistent "How holes work" link (item A3). Shown only when the loaded
@@ -1079,6 +1089,13 @@ helpAnchor = "how-holes-work"
 sectionTitleOf :: GameEnv -> T.Text -> T.Text
 sectionTitleOf env sid = maybe "" sectionTitle (find ((== sid) . sectionId) (envSections env))
 
+-- | The title of the chapter that contains a section, if that chapter is titled.
+-- An untitled chapter (which renders its sections top-level) yields 'Nothing',
+-- so the location breadcrumb shows just the section.
+chapterTitleOf :: GameEnv -> T.Text -> Maybe T.Text
+chapterTitleOf env sid =
+  chapterTitle =<< find (any ((== sid) . sectionId) . chapterSections) (envChapters env)
+
 -- | The grouped level map: chapters group their sections under a heading (an
 -- untitled chapter renders its sections top-level), each section a titled block
 -- with its progress count and a row of slot buttons. Shown only when the map is
@@ -1090,25 +1107,39 @@ levelMap env m =
     (concatMap chapterBlock (envChapters env) ++ [ progressControls m ])
   where
     indexed = zip [0 ..] (envSlots env)
-    -- A chapter: its heading (when titled) followed by its section blocks.
+    -- A chapter: its heading (when titled), with the chapter's aggregate
+    -- progress, followed by its section blocks. An untitled chapter renders no
+    -- heading, so its sections show only their own counts.
     chapterBlock ch =
-      maybe [] (\c -> [ H.h2_ [ P.class_ "chapter-head" ] [ text (ms c) ] ])
+      maybe []
+            (\c -> [ H.div_ [ P.class_ "chapter-head" ]
+                       [ H.span_ [ P.class_ "chapter-title" ] [ text (ms c) ]
+                       , H.span_ [ P.class_ "count-group" ]
+                           ( H.span_ [ P.class_ (ms (countCls "chapter-count" cd ct)) ]
+                               [ text (ms (tshow cd <> " / " <> tshow ct)) ]
+                             : extrasBadge cx )
+                       ] ])
             (chapterTitle ch)
         ++ map sectionBlock (chapterSections ch)
+      where (cd, ct) = chapterProgress (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) ch
+            cx       = chapterExtras   (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) ch
     sectionBlock sec =
       let sid       = sectionId sec
           mine      = [ (i, s) | (i, s) <- indexed, slotSectionId s == sid ]
           (d, t)    = sectionProgress (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) sid
+          sx        = sectionExtras   (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) sid
       in H.div_ [ P.class_ "section-block" ]
            [ H.div_ [ P.class_ "section-head" ]
                [ H.span_ [ P.class_ "section-title" ] [ text (ms (sectionTitle sec)) ]
-               , H.span_ [ P.class_ (ms (countCls d t)) ]
-                   [ text (ms (tshow d <> " / " <> tshow t)) ]
+               , H.span_ [ P.class_ "count-group" ]
+                   ( H.span_ [ P.class_ (ms (countCls "section-count" d t)) ]
+                       [ text (ms (tshow d <> " / " <> tshow t)) ]
+                     : extrasBadge sx )
                ]
            , H.div_ [ P.class_ "levels" ] (map (slotButton env m) mine)
            ]
-    countCls :: Int -> Int -> T.Text
-    countCls d t = "section-count" <> if d == t && t > 0 then " done" else ""
+    countCls :: T.Text -> Int -> Int -> T.Text
+    countCls base d t = base <> if d == t && t > 0 then " done" else ""
 
 -- | Export / import / reset controls, at the foot of the level map. Export and
 -- import move the whole progress archive between devices or back it up; reset
@@ -1213,15 +1244,38 @@ overallProgress env m =
   in ( length (filter (slotDone (m ^. solved) (m ^. viewed) (m ^. pretest)) req)
      , length req )
 
+-- | @(done, total)@ over every extra (starred) slot of the game.
+overallExtras :: GameEnv -> Model -> (Int, Int)
+overallExtras env m =
+  let ex = filter slotExtra (envSlots env)
+  in ( length (filter (slotDone (m ^. solved) (m ^. viewed) (m ^. pretest)) ex)
+     , length ex )
+
+-- | The starred-extras suffix for a progress readout: nothing when the scope has
+-- no extras, a hollow star while some remain, and a gold filled star once every
+-- bonus puzzle is done. It sits beside the required count, which keeps defining
+-- completion, so finishing optional work is acknowledged without inflating the
+-- "must do" denominator.
+extrasBadge :: (Int, Int) -> [View Model Action]
+extrasBadge (_, 0)   = []
+extrasBadge (xd, xt) =
+  [ H.span_ [ P.class_ (ms ("extra-count" <> if xd == xt then " done" else "" :: T.Text)) ]
+      [ text (ms ((if xd == xt then "★ " else "☆ ") <> tshow xd <> "/" <> tshow xt)) ] ]
+
 -- | A section breadcrumb shown atop each slot page: the section title and its
--- "k / n done" count.
+-- "k / n in this section" count (current-section progress).
 breadcrumb :: GameEnv -> Model -> T.Text -> View Model Action
 breadcrumb env m sid =
   H.p_ [ P.class_ "breadcrumb" ]
-    [ text (ms (title <> " · " <> tshow d <> " / " <> tshow t <> " done")) ]
+    ( [ text (ms (title <> " — "))
+      , H.span_ [ P.class_ (ms (bcCls :: T.Text)) ]
+          [ text (ms (tshow d <> " / " <> tshow t)) ]
+      , text " in this section"
+      ] ++ extrasBadge (sectionExtras (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) sid) )
   where
     title  = maybe "" sectionTitle (find ((== sid) . sectionId) (envSections env))
     (d, t) = sectionProgress (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) sid
+    bcCls  = "breadcrumb-count" <> if d == t && t > 0 then " done" else ""
 
 -- | A prose pseudo-level page: the rendered text, a viewed mark, and a section
 -- "complete" badge when reaching it finishes the section.
@@ -1692,7 +1746,7 @@ navBar env m =
   H.div_ [ P.class_ "nav" ]
     [ navButton "prev" "← Previous: " (cur - 1) (cur > 0)
     , H.span_ [ P.class_ "nav-current" ]
-        [ text (ms ("Step " <> tshow (cur + 1) <> " / " <> tshow (length (envSlots env)))) ]
+        [ text (ms ("Page " <> tshow (cur + 1) <> " of " <> tshow (length (envSlots env)))) ]
     , navButton "next" "Next: " (cur + 1) (cur < length (envSlots env) - 1)
     ]
   where
