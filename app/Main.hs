@@ -16,6 +16,7 @@
 module Main (main) where
 
 import           Miso
+import           Miso.CSS           (styleInline_)
 import qualified Miso.Html          as H
 import qualified Miso.Html.Property as P
 import qualified Miso.Svg           as S
@@ -1046,17 +1047,26 @@ navHeader env m =
     [ H.div_ [ P.class_ "mapbar" ]
         [ H.button_ [ P.class_ "map-toggle", H.onClick ToggleMap ]
             [ text (if open then "✕  Close map" else "☰  Levels") ]
-        , H.span_ [ P.class_ "mapbar-loc" ]
-            [ text (ms (sectionTitleOf env (slotSectionId (currentSlot env m)))) ]
-        , H.span_ [ P.class_ (ms (progCls :: T.Text)) ]
-            [ text (ms (tshow done <> " / " <> tshow total)) ]
+        , H.span_ [ P.class_ "mapbar-loc" ] [ text (ms loc) ]
+        , H.div_ [ P.class_ (ms (progCls :: T.Text)), P.title_ "Overall progress" ]
+            [ H.div_ [ P.class_ "mapbar-bar" ]
+                [ H.div_ [ P.class_ "mapbar-bar-fill"
+                         , styleInline_ (ms ("width:" <> tshow pct <> "%")) ] [] ]
+            , H.span_ [ P.class_ "mapbar-count" ]
+                [ text (ms (tshow done <> " / " <> tshow total <> " done")) ]
+            ]
         , helpLink env
         ]
     , if open then levelMap env m else text ""
     ]
   where
     open          = m ^. mapOpen
+    sid           = slotSectionId (currentSlot env m)
+    loc           = case chapterTitleOf env sid of
+                      Just ch | not (T.null ch) -> ch <> " › " <> sectionTitleOf env sid
+                      _                          -> sectionTitleOf env sid
     (done, total) = overallProgress env m
+    pct           = if total > 0 then (done * 100) `div` total else 0 :: Int
     progCls       = "mapbar-progress" <> if done == total && total > 0 then " done" else ""
 
 -- | The persistent "How holes work" link (item A3). Shown only when the loaded
@@ -1078,6 +1088,13 @@ helpAnchor = "how-holes-work"
 -- | The section title for a section id (empty if unknown).
 sectionTitleOf :: GameEnv -> T.Text -> T.Text
 sectionTitleOf env sid = maybe "" sectionTitle (find ((== sid) . sectionId) (envSections env))
+
+-- | The title of the chapter that contains a section, if that chapter is titled.
+-- An untitled chapter (which renders its sections top-level) yields 'Nothing',
+-- so the location breadcrumb shows just the section.
+chapterTitleOf :: GameEnv -> T.Text -> Maybe T.Text
+chapterTitleOf env sid =
+  chapterTitle =<< find (any ((== sid) . sectionId) . chapterSections) (envChapters env)
 
 -- | The grouped level map: chapters group their sections under a heading (an
 -- untitled chapter renders its sections top-level), each section a titled block
@@ -1214,11 +1231,11 @@ overallProgress env m =
      , length req )
 
 -- | A section breadcrumb shown atop each slot page: the section title and its
--- "k / n done" count.
+-- "k / n in this section" count (current-section progress).
 breadcrumb :: GameEnv -> Model -> T.Text -> View Model Action
 breadcrumb env m sid =
   H.p_ [ P.class_ "breadcrumb" ]
-    [ text (ms (title <> " · " <> tshow d <> " / " <> tshow t <> " done")) ]
+    [ text (ms (title <> " — " <> tshow d <> " / " <> tshow t <> " in this section")) ]
   where
     title  = maybe "" sectionTitle (find ((== sid) . sectionId) (envSections env))
     (d, t) = sectionProgress (envSlots env) (m ^. solved) (m ^. viewed) (m ^. pretest) sid
@@ -1692,7 +1709,7 @@ navBar env m =
   H.div_ [ P.class_ "nav" ]
     [ navButton "prev" "← Previous: " (cur - 1) (cur > 0)
     , H.span_ [ P.class_ "nav-current" ]
-        [ text (ms ("Step " <> tshow (cur + 1) <> " / " <> tshow (length (envSlots env)))) ]
+        [ text (ms ("Page " <> tshow (cur + 1) <> " of " <> tshow (length (envSlots env)))) ]
     , navButton "next" "Next: " (cur + 1) (cur < length (envSlots env) - 1)
     ]
   where
